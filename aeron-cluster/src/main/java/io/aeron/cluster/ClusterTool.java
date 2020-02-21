@@ -105,7 +105,7 @@ public class ClusterTool
                 break;
 
             case "recovery-plan":
-                if (args.length < 3)
+                if (args.length != 3)
                 {
                     printHelp(System.out);
                     System.exit(-1);
@@ -126,7 +126,7 @@ public class ClusterTool
                 break;
 
             case "remove-member":
-                if (args.length < 3)
+                if (args.length != 3)
                 {
                     printHelp(System.out);
                     System.exit(-1);
@@ -135,12 +135,21 @@ public class ClusterTool
                 break;
 
             case "remove-passive":
-                if (args.length < 3)
+                if (args.length != 3)
                 {
                     printHelp(System.out);
                     System.exit(-1);
                 }
                 removeMember(System.out, clusterDir, Integer.parseInt(args[2]), true);
+                break;
+
+            case "stop-member":
+                if (args.length != 3)
+                {
+                    printHelp(System.out);
+                    System.exit(-1);
+                }
+                stopMember(System.out, clusterDir, Integer.parseInt(args[2]));
                 break;
 
             case "backup-query":
@@ -306,6 +315,24 @@ public class ClusterTool
                 if (!removeMember(markFile, memberId, isPassive))
                 {
                     out.println("could not send remove member request");
+                }
+            }
+        }
+        else
+        {
+            out.println(ClusterMarkFile.FILENAME + " does not exist.");
+        }
+    }
+
+    public static void stopMember(final PrintStream out, final File clusterDir, final int memberId)
+    {
+        if (markFileExists(clusterDir) || TIMEOUT_MS > 0)
+        {
+            try (ClusterMarkFile markFile = openMarkFile(clusterDir, System.out::println))
+            {
+                if (!stopMember(markFile, memberId))
+                {
+                    out.println("could not send stop member request");
                 }
             }
         }
@@ -517,6 +544,26 @@ public class ClusterTool
         {
             if (consensusModuleProxy.removeMember(
                 aeron.nextCorrelationId(), memberId, isPassive ? BooleanType.TRUE : BooleanType.FALSE))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    public static boolean stopMember(final ClusterMarkFile markFile, final int memberId)
+    {
+        final String aeronDirectoryName = markFile.decoder().aeronDirectory();
+        markFile.decoder().archiveChannel();
+        final String channel = markFile.decoder().serviceControlChannel();
+        final int consensusModuleStreamId = markFile.decoder().consensusModuleStreamId();
+
+        try (Aeron aeron = Aeron.connect(new Aeron.Context().aeronDirectoryName(aeronDirectoryName));
+            ConsensusModuleProxy consensusModuleProxy = new ConsensusModuleProxy(
+                aeron.addPublication(channel, consensusModuleStreamId)))
+        {
+            if (consensusModuleProxy.stopMember(aeron.nextCorrelationId(), memberId))
             {
                 return true;
             }

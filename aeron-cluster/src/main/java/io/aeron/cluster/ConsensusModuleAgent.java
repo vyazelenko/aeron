@@ -31,7 +31,10 @@ import io.aeron.logbuffer.ControlledFragmentHandler;
 import io.aeron.logbuffer.Header;
 import io.aeron.security.Authenticator;
 import io.aeron.status.ReadableCounter;
-import org.agrona.*;
+import org.agrona.DirectBuffer;
+import org.agrona.ExpandableRingBuffer;
+import org.agrona.MutableDirectBuffer;
+import org.agrona.SemanticVersion;
 import org.agrona.collections.*;
 import org.agrona.concurrent.*;
 import org.agrona.concurrent.status.CountersReader;
@@ -795,6 +798,10 @@ class ConsensusModuleAgent implements Agent
                 ClusterMember.encodeAsString(clusterMembers),
                 ClusterMember.encodeAsString(passiveMembers));
         }
+    }
+
+    public void onStopMember(final long correlationId, final int memberId)
+    {
     }
 
     void state(final ConsensusModule.State newState)

@@ -31,9 +31,8 @@ import org.agrona.DirectBuffer;
  */
 public final class ConsensusModuleProxy implements AutoCloseable
 {
-    private static final int SEND_ATTEMPTS = 3;
+    static final int SEND_ATTEMPTS = 3;
 
-    private final BufferClaim bufferClaim = new BufferClaim();
     private final MessageHeaderEncoder messageHeaderEncoder = new MessageHeaderEncoder();
     private final ScheduleTimerEncoder scheduleTimerEncoder = new ScheduleTimerEncoder();
     private final CancelTimerEncoder cancelTimerEncoder = new CancelTimerEncoder();
@@ -41,11 +40,19 @@ public final class ConsensusModuleProxy implements AutoCloseable
     private final CloseSessionEncoder closeSessionEncoder = new CloseSessionEncoder();
     private final ClusterMembersQueryEncoder clusterMembersQueryEncoder = new ClusterMembersQueryEncoder();
     private final RemoveMemberEncoder removeMemberEncoder = new RemoveMemberEncoder();
+    private final StopMemberEncoder stopMemberEncoder = new StopMemberEncoder();
     private final Publication publication;
+    private final BufferClaim bufferClaim;
 
     public ConsensusModuleProxy(final Publication publication)
     {
+        this(publication, new BufferClaim());
+    }
+
+    ConsensusModuleProxy(final Publication publication, final BufferClaim bufferClaim)
+    {
         this.publication = publication;
+        this.bufferClaim = bufferClaim;
     }
 
     public void close()
@@ -232,6 +239,33 @@ public final class ConsensusModuleProxy implements AutoCloseable
                     .correlationId(correlationId)
                     .memberId(memberId)
                     .isPassive(isPassive);
+
+                bufferClaim.commit();
+
+                return true;
+            }
+
+            checkResult(result);
+        }
+        while (--attempts > 0);
+
+        return false;
+    }
+
+    public boolean stopMember(final long correlationId, final int memberId)
+    {
+        final int length = MessageHeaderEncoder.ENCODED_LENGTH + StopMemberEncoder.BLOCK_LENGTH;
+
+        int attempts = SEND_ATTEMPTS;
+        do
+        {
+            final long result = publication.tryClaim(length, bufferClaim);
+            if (result > 0)
+            {
+                stopMemberEncoder
+                    .wrapAndApplyHeader(bufferClaim.buffer(), bufferClaim.offset(), messageHeaderEncoder)
+                    .correlationId(correlationId)
+                    .memberId(memberId);
 
                 bufferClaim.commit();
 

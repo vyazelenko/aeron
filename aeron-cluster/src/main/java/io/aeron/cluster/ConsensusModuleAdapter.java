@@ -26,7 +26,7 @@ import org.agrona.DirectBuffer;
 
 final class ConsensusModuleAdapter implements AutoCloseable
 {
-    private static final int FRAGMENT_LIMIT = 10;
+    static final int FRAGMENT_LIMIT = 10;
     private final Subscription subscription;
     private final ConsensusModuleAgent consensusModuleAgent;
     private final MessageHeaderDecoder messageHeaderDecoder = new MessageHeaderDecoder();
@@ -37,6 +37,7 @@ final class ConsensusModuleAdapter implements AutoCloseable
     private final CloseSessionDecoder closeSessionDecoder = new CloseSessionDecoder();
     private final ClusterMembersQueryDecoder clusterMembersQueryDecoder = new ClusterMembersQueryDecoder();
     private final RemoveMemberDecoder removeMemberDecoder = new RemoveMemberDecoder();
+    private final StopMemberDecoder stopMemberDecoder = new StopMemberDecoder();
     private final ControlledFragmentAssembler fragmentAssembler = new ControlledFragmentAssembler(this::onFragment);
 
     ConsensusModuleAdapter(final Subscription subscription, final ConsensusModuleAgent consensusModuleAgent)
@@ -158,6 +159,16 @@ final class ConsensusModuleAdapter implements AutoCloseable
                     removeMemberDecoder.correlationId(),
                     removeMemberDecoder.memberId(),
                     BooleanType.TRUE == removeMemberDecoder.isPassive());
+                break;
+
+            case StopMemberDecoder.TEMPLATE_ID:
+                stopMemberDecoder.wrap(
+                    buffer,
+                    offset + MessageHeaderDecoder.ENCODED_LENGTH,
+                    messageHeaderDecoder.blockLength(),
+                    messageHeaderDecoder.version());
+
+                consensusModuleAgent.onStopMember(stopMemberDecoder.correlationId(), stopMemberDecoder.memberId());
                 break;
         }
 
