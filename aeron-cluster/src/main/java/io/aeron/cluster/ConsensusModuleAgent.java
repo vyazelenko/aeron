@@ -802,6 +802,53 @@ class ConsensusModuleAgent implements Agent
 
     public void onStopMember(final long correlationId, final int memberId)
     {
+        final ClusterMember member = clusterMemberByIdMap.get(memberId);
+
+        if (null == member || member != leaderMember)
+        {
+            ctx.countedErrorHandler().onError(
+                new ClusterException("attempt to stop non-leader member", AeronException.Category.WARN));
+        }
+        else if (member == thisMember && Cluster.Role.LEADER == role)
+        {
+            final long commitPosition = this.commitPosition.get();
+            final long leadershipTermId = this.leadershipTermId;
+
+            final long recordingId = getRecordingId();
+            if (RecordingPos.NULL_RECORDING_ID != recordingId)
+            {
+                stopRecordingAtPosition(recordingId, commitPosition);
+            }
+
+            for (final ClusterMember clusterMember : clusterMembers)
+            {
+                if (clusterMember != thisMember)
+                {
+                    memberStatusPublisher.leaderAbort(
+                        clusterMember.publication(),
+                        memberId,
+                        leadershipTermId,
+                        commitPosition);
+                }
+            }
+
+            serviceProxy.terminationPosition(commitPosition);
+
+            state(ConsensusModule.State.TERMINATING);
+        }
+    }
+
+    public void onLeaderAbort(final int leaderId, final long leadershipTermId, final long commitPosition)
+    {
+        final ClusterMember leader = this.leaderMember;
+        if (null != leader && leaderId == leader.id() && leadershipTermId == this.leadershipTermId)
+        {
+            // FIXME: What to do with the commitPosition of the leader?
+            // FIXME: How to start election without calling enterElection??
+
+            return;
+        }
+        ctx.countedErrorHandler().onError(new ClusterException("", AeronException.Category.WARN));
     }
 
     void state(final ConsensusModule.State newState)
@@ -850,36 +897,13 @@ class ConsensusModuleAgent implements Agent
     {
         ClusterControl.ToggleState.deactivate(controlToggle);
 
-        long recordingId = RecordingPos.NULL_RECORDING_ID;
-        if (null != appendPosition)
-        {
-            recordingId = RecordingPos.getRecordingId(aeron.countersReader(), appendPosition.counterId());
-        }
-
+        final long recordingId = getRecordingId();
         if (RecordingPos.NULL_RECORDING_ID == recordingId)
         {
-            recordingId = recordingLog.findLastTermRecordingId();
-            if (RecordingPos.NULL_RECORDING_ID == recordingId)
-            {
-                return;
-            }
+            return;
         }
 
-        stopLogRecording();
-
-        long stopPosition;
-        idleStrategy.reset();
-        while (AeronArchive.NULL_POSITION == (stopPosition = archive.getStopPosition(recordingId)))
-        {
-            idle();
-        }
-
-        archive.stopAllReplays(recordingId);
-
-        if (stopPosition > logPosition)
-        {
-            archive.truncateRecording(recordingId, logPosition);
-        }
+        stopRecordingAtPosition(recordingId, logPosition);
 
         if (NULL_VALUE == logInitialTermId)
         {
@@ -2856,5 +2880,39 @@ class ConsensusModuleAgent implements Agent
             MessageHeaderDecoder.ENCODED_LENGTH + SessionMessageHeaderDecoder.clusterSessionIdEncodingOffset();
 
         return buffer.getLong(clusterSessionIdOffset, SessionMessageHeaderDecoder.BYTE_ORDER) <= logServiceSessionId;
+    }
+
+    private long getRecordingId()
+    {
+        long recordingId = RecordingPos.NULL_RECORDING_ID;
+        if (null != appendPosition)
+        {
+            recordingId = RecordingPos.getRecordingId(aeron.countersReader(), appendPosition.counterId());
+        }
+
+        if (RecordingPos.NULL_RECORDING_ID == recordingId)
+        {
+            recordingId = recordingLog.findLastTermRecordingId();
+        }
+        return recordingId;
+    }
+
+    private void stopRecordingAtPosition(final long recordingId, final long logPosition)
+    {
+        stopLogRecording();
+
+        long stopPosition;
+        idleStrategy.reset();
+        while (AeronArchive.NULL_POSITION == (stopPosition = archive.getStopPosition(recordingId)))
+        {
+            idle();
+        }
+
+        archive.stopAllReplays(recordingId);
+
+        if (stopPosition > logPosition)
+        {
+            archive.truncateRecording(recordingId, logPosition);
+        }
     }
 }

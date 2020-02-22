@@ -24,10 +24,10 @@ import org.agrona.ExpandableArrayBuffer;
 
 class MemberStatusPublisher
 {
-    private static final int SEND_ATTEMPTS = 3;
+    static final int SEND_ATTEMPTS = 3;
 
     private final ExpandableArrayBuffer buffer = new ExpandableArrayBuffer();
-    private final BufferClaim bufferClaim = new BufferClaim();
+    private final BufferClaim bufferClaim;
     private final MessageHeaderEncoder messageHeaderEncoder = new MessageHeaderEncoder();
     private final CanvassPositionEncoder canvassPositionEncoder = new CanvassPositionEncoder();
     private final RequestVoteEncoder requestVoteEncoder = new RequestVoteEncoder();
@@ -46,6 +46,18 @@ class MemberStatusPublisher
     private final TerminationAckEncoder terminationAckEncoder = new TerminationAckEncoder();
     private final BackupQueryEncoder backupQueryEncoder = new BackupQueryEncoder();
     private final BackupResponseEncoder backupResponseEncoder = new BackupResponseEncoder();
+    private final LeaderAbortEncoder leaderAbortEncoder = new LeaderAbortEncoder();
+
+
+    MemberStatusPublisher()
+    {
+        this(new BufferClaim());
+    }
+
+    MemberStatusPublisher(final BufferClaim bufferClaim)
+    {
+        this.bufferClaim = bufferClaim;
+    }
 
     void canvassPosition(
         final ExclusivePublication publication,
@@ -621,6 +633,38 @@ class MemberStatusPublisher
             final long result = publication.offer(buffer, 0, length);
             if (result > 0)
             {
+                return true;
+            }
+
+            checkResult(result);
+        }
+        while (--attempts > 0);
+
+        return false;
+    }
+
+    boolean leaderAbort(
+        final ExclusivePublication publication,
+        final int leaderId,
+        final long leadershipTermId,
+        final long commitPosition)
+    {
+        final int length = MessageHeaderEncoder.ENCODED_LENGTH + LeaderAbortEncoder.BLOCK_LENGTH;
+
+        int attempts = SEND_ATTEMPTS;
+        do
+        {
+            final long result = publication.tryClaim(length, bufferClaim);
+            if (result > 0)
+            {
+                leaderAbortEncoder
+                    .wrapAndApplyHeader(bufferClaim.buffer(), bufferClaim.offset(), messageHeaderEncoder)
+                    .leaderId(leaderId)
+                    .leadershipTermId(leadershipTermId)
+                    .commitPosition(commitPosition);
+
+                bufferClaim.commit();
+
                 return true;
             }
 

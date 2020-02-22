@@ -46,6 +46,7 @@ class MemberStatusAdapter implements FragmentHandler, AutoCloseable
     private final TerminationPositionDecoder terminationPositionDecoder = new TerminationPositionDecoder();
     private final TerminationAckDecoder terminationAckDecoder = new TerminationAckDecoder();
     private final BackupQueryDecoder backupQueryDecoder = new BackupQueryDecoder();
+    private final LeaderAbortDecoder leaderAbortDecoder = new LeaderAbortDecoder();
 
     private final FragmentAssembler fragmentAssembler = new FragmentAssembler(this);
     private final Subscription subscription;
@@ -294,6 +295,20 @@ class MemberStatusAdapter implements FragmentHandler, AutoCloseable
                     backupQueryDecoder.version(),
                     responseChannel,
                     credentials);
+                break;
+
+            case LeaderAbortDecoder.TEMPLATE_ID:
+                leaderAbortDecoder.wrap(
+                    buffer,
+                    offset + MessageHeaderDecoder.ENCODED_LENGTH,
+                    messageHeaderDecoder.blockLength(),
+                    messageHeaderDecoder.version());
+
+                consensusModuleAgent.onLeaderAbort(
+                    leaderAbortDecoder.leaderId(),
+                    leaderAbortDecoder.leadershipTermId(),
+                    leaderAbortDecoder.commitPosition()
+                );
                 break;
         }
     }
