@@ -806,8 +806,8 @@ class ConsensusModuleAgent implements Agent
 
         if (null == member || member != leaderMember)
         {
-            ctx.countedErrorHandler().onError(
-                new ClusterException("attempt to stop non-leader member", AeronException.Category.WARN));
+            ctx.countedErrorHandler().onError(new ClusterException("attempt to stop non-leader member with ID=" +
+                memberId));
         }
         else if (member == thisMember && Cluster.Role.LEADER == role)
         {
@@ -849,6 +849,11 @@ class ConsensusModuleAgent implements Agent
             return;
         }
         ctx.countedErrorHandler().onError(new ClusterException("", AeronException.Category.WARN));
+    }
+
+    ConsensusModule.State state()
+    {
+        return state;
     }
 
     void state(final ConsensusModule.State newState)
@@ -1877,6 +1882,11 @@ class ConsensusModuleAgent implements Agent
         }
 
         return false;
+    }
+
+    void archive(final AeronArchive archive)
+    {
+        this.archive = archive;
     }
 
     private int slowTickWork(final long nowMs, final long nowNs)
