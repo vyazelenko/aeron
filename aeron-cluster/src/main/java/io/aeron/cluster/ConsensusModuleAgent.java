@@ -841,14 +841,19 @@ class ConsensusModuleAgent implements Agent
     public void onLeaderAbort(final int leaderId, final long leadershipTermId, final long commitPosition)
     {
         final ClusterMember leader = this.leaderMember;
-        if (null != leader && leaderId == leader.id() && leadershipTermId == this.leadershipTermId)
+        if (leaderId != leader.id() || Cluster.Role.LEADER == role || leadershipTermId != this.leadershipTermId)
+        {
+            ctx.countedErrorHandler().onError(new ClusterException("invalid leader abort attempt: " +
+                "leaderId=" + leaderId + " (actual leaderId=" + leader.id() + ", role=" + role + "), " +
+                "leadershipTermId=" + leadershipTermId + " (actual leadershipTermId=" + this.leadershipTermId + "), " +
+                "commitPosition=" + commitPosition
+            ));
+        }
+        else
         {
             // FIXME: What to do with the commitPosition of the leader?
             // FIXME: How to start election without calling enterElection??
-
-            return;
         }
-        ctx.countedErrorHandler().onError(new ClusterException("", AeronException.Category.WARN));
     }
 
     ConsensusModule.State state()

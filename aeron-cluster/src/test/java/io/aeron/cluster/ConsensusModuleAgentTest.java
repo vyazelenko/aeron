@@ -19,6 +19,7 @@ import io.aeron.*;
 import io.aeron.archive.client.AeronArchive;
 import io.aeron.cluster.client.ClusterException;
 import io.aeron.cluster.codecs.*;
+import io.aeron.cluster.service.Cluster;
 import io.aeron.cluster.service.ClusterMarkFile;
 import io.aeron.logbuffer.BufferClaim;
 import io.aeron.security.DefaultAuthenticatorSupplier;
@@ -45,6 +46,7 @@ import static io.aeron.cluster.ConsensusModule.State.TERMINATING;
 import static io.aeron.cluster.ConsensusModuleAgent.SLOW_TICK_INTERVAL_NS;
 import static io.aeron.cluster.client.AeronCluster.Configuration.PROTOCOL_SEMANTIC_VERSION;
 import static io.aeron.cluster.codecs.MessageHeaderEncoder.ENCODED_LENGTH;
+import static io.aeron.cluster.service.Cluster.Role.FOLLOWER;
 import static io.aeron.cluster.service.Cluster.Role.LEADER;
 import static io.aeron.exceptions.AeronException.Category.ERROR;
 import static io.aeron.protocol.DataHeaderFlyweight.HEADER_LENGTH;
@@ -461,6 +463,72 @@ public class ConsensusModuleAgentTest
         verifyTerminationPositionMessage(serviceProxyBuffer, commitPosition);
     }
 
+    @Test
+    void onLeaderRaisesAnErrorIfWrongLeaderIdSpecified()
+    {
+        final int leaderId = 1919;
+        final long leadershipTermId = 88;
+        final long commitPosition = 200;
+        final CountedErrorHandler countedErrorHandler = mock(CountedErrorHandler.class);
+        ctx.countedErrorHandler(countedErrorHandler).clusterClock(new TestClusterClock(MILLISECONDS));
+        final ConsensusModuleAgent agent = new ConsensusModuleAgent(ctx);
+        agent.initialiseLeadershipTermId(leadershipTermId);
+
+        agent.onLeaderAbort(leaderId, leadershipTermId, commitPosition);
+
+        verifyOnLeaderAbortError(countedErrorHandler, leaderId, leadershipTermId, commitPosition, 0, leadershipTermId, FOLLOWER);
+    }
+
+    @Test
+    void onLeaderRaisesAnErrorIfWrongLeadershipTermIdSpecified()
+    {
+        final ClusterMember follower =
+            parseEndpoints(777, "localhost:21210,localhost:21211,localhost:21212,localhost:21213,localhost:21214");
+        final int leaderId = follower.id();
+        final long leadershipTermId = 88;
+        final long actualLeadershipTermId = leadershipTermId * 100;
+        final long commitPosition = 200;
+        final CountedErrorHandler countedErrorHandler = mock(CountedErrorHandler.class);
+
+        ctx.countedErrorHandler(countedErrorHandler)
+            .clusterClock(new TestClusterClock(MILLISECONDS))
+            .clusterMembers(encodeAsString(new ClusterMember[]{ follower }))
+            .clusterMemberId(leaderId);
+
+        final ConsensusModuleAgent agent = new ConsensusModuleAgent(ctx);
+        agent.initialiseLeadershipTermId(actualLeadershipTermId);
+
+        agent.onLeaderAbort(leaderId, leadershipTermId, commitPosition);
+
+        verifyOnLeaderAbortError(
+            countedErrorHandler, leaderId, leadershipTermId, commitPosition, leaderId, actualLeadershipTermId, FOLLOWER);
+    }
+
+    @Test
+    void onLeaderRaisesAnErrorIfInvokedOnLeaderItself()
+    {
+        final ClusterMember leader =
+            parseEndpoints(777, "localhost:21210,localhost:21211,localhost:21212,localhost:21213,localhost:21214");
+        final int leaderId = leader.id();
+        final long leadershipTermId = 88;
+        final long commitPosition = 200;
+        final CountedErrorHandler countedErrorHandler = mock(CountedErrorHandler.class);
+
+        ctx.countedErrorHandler(countedErrorHandler)
+            .clusterClock(new TestClusterClock(MILLISECONDS))
+            .clusterMembers(encodeAsString(new ClusterMember[]{ leader }))
+            .clusterMemberId(leaderId);
+
+        final ConsensusModuleAgent agent = new ConsensusModuleAgent(ctx);
+        agent.initialiseLeadershipTermId(leadershipTermId);
+        agent.role(LEADER);
+
+        agent.onLeaderAbort(leaderId, leadershipTermId, commitPosition);
+
+        verifyOnLeaderAbortError(
+            countedErrorHandler, leaderId, leadershipTermId, commitPosition, leaderId, leadershipTermId, LEADER);
+    }
+
     private UnsafeBuffer mockTryClaim(final Publication publication, final int length)
     {
         final UnsafeBuffer buffer = new UnsafeBuffer(new byte[align(HEADER_LENGTH + length, CACHE_LINE_LENGTH)]);
@@ -487,5 +555,27 @@ public class ConsensusModuleAgentTest
     {
         final int offset = HEADER_LENGTH + MessageHeaderEncoder.ENCODED_LENGTH;
         assertEquals(commitPosition, buffer.getLong(offset, LITTLE_ENDIAN));
+    }
+
+    private void verifyOnLeaderAbortError(
+        final CountedErrorHandler countedErrorHandler,
+        final int leaderId,
+        final long leadershipTermId,
+        final long commitPosition,
+        final int actualLeaderId,
+        final long actualLeadershipTermId,
+        final Cluster.Role role)
+    {
+        verify(countedErrorHandler).onError(argThat(
+            error ->
+            {
+                final ClusterException ex = (ClusterException)error;
+                assertEquals(ERROR, ex.category());
+                assertEquals("invalid leader abort attempt: " +
+                    "leaderId=" + leaderId + " (actual leaderId=" + actualLeaderId + ", role=" + role + "), " +
+                    "leadershipTermId=" + leadershipTermId + " (actual leadershipTermId=" +
+                    actualLeadershipTermId + "), commitPosition=" + commitPosition, ex.getMessage());
+                return true;
+            }));
     }
 }
