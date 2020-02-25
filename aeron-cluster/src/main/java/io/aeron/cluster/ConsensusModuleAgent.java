@@ -849,7 +849,7 @@ class ConsensusModuleAgent implements Agent
                 "commitPosition=" + commitPosition
             ));
         }
-        else
+        else if (null == election)
         {
             final long nowNs = clusterTimeUnit.toNanos(clusterClock.time());
             followerCommitPosition = commitPosition;
