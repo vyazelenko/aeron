@@ -42,7 +42,7 @@ import static io.aeron.cluster.ClusterMember.encodeAsString;
 import static io.aeron.cluster.ClusterMember.parseEndpoints;
 import static io.aeron.cluster.ConsensusModule.Configuration.*;
 import static io.aeron.cluster.ConsensusModule.State.INIT;
-import static io.aeron.cluster.ConsensusModule.State.TERMINATING;
+import static io.aeron.cluster.ConsensusModule.State.QUITTING;
 import static io.aeron.cluster.ConsensusModuleAgent.SLOW_TICK_INTERVAL_NS;
 import static io.aeron.cluster.client.AeronCluster.Configuration.PROTOCOL_SEMANTIC_VERSION;
 import static io.aeron.cluster.codecs.MessageHeaderEncoder.ENCODED_LENGTH;
@@ -439,7 +439,7 @@ public class ConsensusModuleAgentTest
 
         agent.onStopMember(42, leader.id());
 
-        assertEquals(TERMINATING, agent.state());
+        assertEquals(QUITTING, agent.state());
         final InOrder inOrder = inOrder(
             commitPositionCounter,
             publication1,

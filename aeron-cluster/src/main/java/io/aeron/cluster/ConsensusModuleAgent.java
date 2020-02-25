@@ -834,7 +834,8 @@ class ConsensusModuleAgent implements Agent
 
             serviceProxy.terminationPosition(commitPosition);
 
-            state(ConsensusModule.State.TERMINATING);
+            expectedAckPosition = commitPosition;
+            state(ConsensusModule.State.QUITTING);
         }
     }
 
