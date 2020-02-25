@@ -464,7 +464,7 @@ public class ConsensusModuleAgentTest
     }
 
     @Test
-    void onLeaderRaisesAnErrorIfWrongLeaderIdSpecified()
+    void onLeaderAbortRaisesAnErrorIfWrongLeaderIdSpecified()
     {
         final int leaderId = 1919;
         final long leadershipTermId = 88;
@@ -480,7 +480,7 @@ public class ConsensusModuleAgentTest
     }
 
     @Test
-    void onLeaderRaisesAnErrorIfWrongLeadershipTermIdSpecified()
+    void onLeaderAbortRaisesAnErrorIfWrongLeadershipTermIdSpecified()
     {
         final ClusterMember follower =
             parseEndpoints(777, "localhost:21210,localhost:21211,localhost:21212,localhost:21213,localhost:21214");
@@ -505,7 +505,7 @@ public class ConsensusModuleAgentTest
     }
 
     @Test
-    void onLeaderRaisesAnErrorIfInvokedOnLeaderItself()
+    void onLeaderAbortRaisesAnErrorIfInvokedOnLeaderItself()
     {
         final ClusterMember leader =
             parseEndpoints(777, "localhost:21210,localhost:21211,localhost:21212,localhost:21213,localhost:21214");
@@ -527,6 +527,61 @@ public class ConsensusModuleAgentTest
 
         verifyOnLeaderAbortError(
             countedErrorHandler, leaderId, leadershipTermId, commitPosition, leaderId, leadershipTermId, LEADER);
+    }
+
+    @Test
+    void onLeaderAbortStartsNewElection()
+    {
+        final ClusterMember leader =
+            parseEndpoints(777, "localhost:21210,localhost:21211,localhost:21212,localhost:21213,localhost:21214");
+        final ClusterMember follower =
+            parseEndpoints(555, "localhost:31310,localhost:31311,localhost:31312,localhost:31313,localhost:31314");
+        final int leaderId = leader.id();
+        final long leadershipTermId = 88;
+        final long commitPosition = 200;
+        final String serviceControlChannel = "serviceControlChannel";
+        final int serviceStreamId = 333;
+        final int electionStartEventLength = ENCODED_LENGTH + ElectionStartEventEncoder.BLOCK_LENGTH;
+
+        final TestClusterClock clock = spy(new TestClusterClock(MILLISECONDS));
+        final CountedErrorHandler countedErrorHandler = mock(CountedErrorHandler.class);
+
+        final ConcurrentPublication serviceProxyPublication = mock(ConcurrentPublication.class);
+        final UnsafeBuffer serviceProxyBuffer = mockTryClaim(serviceProxyPublication, electionStartEventLength);
+        when(mockAeron.addPublication(serviceControlChannel, serviceStreamId)).thenReturn(serviceProxyPublication);
+
+        final Counter commitPositionCounter = mock(Counter.class);
+        when(commitPositionCounter.getWeak()).thenReturn(commitPosition);
+
+        final Counter electionStateCounter = mock(Counter.class);
+
+        final RecordingLog recordingLog = mock(RecordingLog.class);
+        when(recordingLog.findLastTermRecordingId()).thenReturn(NULL_RECORDING_ID);
+
+        ctx.countedErrorHandler(countedErrorHandler)
+            .clusterClock(clock)
+            .commitPositionCounter(commitPositionCounter)
+            .electionStateCounter(electionStateCounter)
+            .recordingLog(recordingLog)
+            .serviceControlChannel(serviceControlChannel)
+            .serviceStreamId(serviceStreamId)
+            .clusterMembers(encodeAsString(new ClusterMember[]{ leader, follower }))
+            .clusterMemberId(follower.id());
+
+        final ConsensusModuleAgent agent = new ConsensusModuleAgent(ctx);
+        agent.initialiseLeadershipTermId(leadershipTermId);
+        agent.leaderMember(leader);
+
+        agent.onLeaderAbort(leaderId, leadershipTermId, commitPosition);
+
+        final InOrder inOrder = inOrder(clock, serviceProxyPublication, commitPositionCounter, electionStateCounter);
+        inOrder.verify(clock).time();
+        inOrder.verify(electionStateCounter).setOrdered(Election.State.INIT.code());
+        inOrder.verify(commitPositionCounter).getWeak();
+        inOrder.verify(serviceProxyPublication).tryClaim(eq(electionStartEventLength), any(BufferClaim.class));
+        inOrder.verifyNoMoreInteractions();
+
+        verifyElectionStartMessage(serviceProxyBuffer, commitPosition);
     }
 
     private UnsafeBuffer mockTryClaim(final Publication publication, final int length)
@@ -577,5 +632,11 @@ public class ConsensusModuleAgentTest
                     actualLeadershipTermId + "), commitPosition=" + commitPosition, ex.getMessage());
                 return true;
             }));
+    }
+
+    private void verifyElectionStartMessage(final UnsafeBuffer buffer, final long commitPosition)
+    {
+        final int offset = HEADER_LENGTH + MessageHeaderEncoder.ENCODED_LENGTH;
+        assertEquals(commitPosition, buffer.getLong(offset, LITTLE_ENDIAN));
     }
 }

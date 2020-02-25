@@ -851,8 +851,9 @@ class ConsensusModuleAgent implements Agent
         }
         else
         {
-            // FIXME: What to do with the commitPosition of the leader?
-            // FIXME: How to start election without calling enterElection??
+            final long nowNs = clusterTimeUnit.toNanos(clusterClock.time());
+            followerCommitPosition = commitPosition;
+            enterElection(nowNs);
         }
     }
 
@@ -1892,6 +1893,11 @@ class ConsensusModuleAgent implements Agent
     void archive(final AeronArchive archive)
     {
         this.archive = archive;
+    }
+
+    void leaderMember(final ClusterMember leaderMember)
+    {
+        this.leaderMember = leaderMember;
     }
 
     private int slowTickWork(final long nowMs, final long nowNs)
