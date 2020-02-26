@@ -15,26 +15,29 @@
  */
 package io.aeron.cluster;
 
+import io.aeron.cluster.service.ClusterMarkFile;
 import io.aeron.test.SlowTest;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.io.PrintStream;
 import java.nio.file.Path;
 
 import static io.aeron.Aeron.NULL_VALUE;
+import static io.aeron.cluster.ClusterTool.*;
 import static java.nio.charset.StandardCharsets.US_ASCII;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.junit.jupiter.api.Assertions.*;
 
-@SlowTest
 class ClusterToolTest
 {
     private final CapturingPrintStream capturingPrintStream = new CapturingPrintStream();
 
+    @SlowTest
     @Test
     @Timeout(30)
     void shouldHandleSnapshotOnLeaderOnly() throws InterruptedException
@@ -44,7 +47,7 @@ class ClusterToolTest
             final TestNode leader = cluster.awaitLeader();
             final long initialSnapshotCount = cluster.countRecordingLogSnapshots(leader);
 
-            assertTrue(ClusterTool.snapshot(
+            assertTrue(snapshot(
                 leader.consensusModule().context().clusterDir(),
                 capturingPrintStream.resetAndGetPrintStream()));
 
@@ -56,7 +59,7 @@ class ClusterToolTest
 
             for (final TestNode follower : cluster.followers())
             {
-                assertFalse(ClusterTool.snapshot(
+                assertFalse(snapshot(
                     follower.consensusModule().context().clusterDir(),
                     capturingPrintStream.resetAndGetPrintStream()));
 
@@ -67,6 +70,7 @@ class ClusterToolTest
         }
     }
 
+    @SlowTest
     @Test
     @Timeout(30)
     void shouldNotSnapshotWhenSuspendedOnly() throws InterruptedException
@@ -76,7 +80,7 @@ class ClusterToolTest
             final TestNode leader = cluster.awaitLeader();
             final long initialSnapshotCount = cluster.countRecordingLogSnapshots(leader);
 
-            assertTrue(ClusterTool.suspend(
+            assertTrue(suspend(
                 leader.consensusModule().context().clusterDir(),
                 capturingPrintStream.resetAndGetPrintStream()));
 
@@ -84,7 +88,7 @@ class ClusterToolTest
                 capturingPrintStream.flushAndGetContent(),
                 containsString("SUSPEND applied successfully"));
 
-            assertFalse(ClusterTool.snapshot(
+            assertFalse(snapshot(
                 leader.consensusModule().context().clusterDir(),
                 capturingPrintStream.resetAndGetPrintStream()));
 
@@ -96,6 +100,7 @@ class ClusterToolTest
         }
     }
 
+    @SlowTest
     @Test
     @Timeout(30)
     void shouldSuspendAndResume() throws InterruptedException
@@ -104,7 +109,7 @@ class ClusterToolTest
         {
             final TestNode leader = cluster.awaitLeader();
 
-            assertTrue(ClusterTool.suspend(
+            assertTrue(suspend(
                 leader.consensusModule().context().clusterDir(),
                 capturingPrintStream.resetAndGetPrintStream()));
 
@@ -112,7 +117,7 @@ class ClusterToolTest
                 capturingPrintStream.flushAndGetContent(),
                 containsString("SUSPEND applied successfully"));
 
-            assertTrue(ClusterTool.resume(
+            assertTrue(resume(
                 leader.consensusModule().context().clusterDir(),
                 capturingPrintStream.resetAndGetPrintStream()));
 
@@ -125,10 +130,43 @@ class ClusterToolTest
     @Test
     void failIfMarkFileUnavailable(final @TempDir Path emptyClusterDir)
     {
-        assertFalse(ClusterTool.snapshot(emptyClusterDir.toFile(), capturingPrintStream.resetAndGetPrintStream()));
+        assertFalse(snapshot(emptyClusterDir.toFile(), capturingPrintStream.resetAndGetPrintStream()));
         assertThat(
             capturingPrintStream.flushAndGetContent(),
-            containsString("cluster-mark.dat does not exist"));
+            containsString(ClusterMarkFile.FILENAME + " does not exist."));
+    }
+
+    @Test
+    void stopMemberFailsWithErrorIfClusterMarkFileDoesNotExists(final @TempDir Path emptyClusterDir)
+    {
+        System.clearProperty(AERON_CLUSTER_TOOL_TIMEOUT_PROP_NAME);
+
+        stopMember(capturingPrintStream.resetAndGetPrintStream(), emptyClusterDir.toFile(), 111);
+
+        assertThat(
+            capturingPrintStream.flushAndGetContent(),
+            containsString(ClusterMarkFile.FILENAME + " does not exist."));
+    }
+
+    @Test
+    @Timeout(20)
+    void stopMemberInitiatesGracefulLeaderStepDown() throws InterruptedException
+    {
+        try (TestCluster cluster = TestCluster.startThreeNodeStaticCluster(NULL_VALUE))
+        {
+            final TestNode leader = cluster.awaitLeader();
+
+            final int leaderId = leader.index();
+            final File clusterDir = leader.consensusModule().context().clusterDir();
+            leader.terminationExpected(true);
+
+            stopMember(capturingPrintStream.resetAndGetPrintStream(), clusterDir, leaderId);
+
+            final TestNode newLeader = cluster.awaitLeader(leaderId);
+
+            assertNotSame(leader, newLeader);
+            assertNotEquals(leaderId, newLeader.index());
+        }
     }
 
     static class CapturingPrintStream
