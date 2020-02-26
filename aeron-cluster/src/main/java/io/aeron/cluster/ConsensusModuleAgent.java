@@ -834,8 +834,11 @@ class ConsensusModuleAgent implements Agent
 
             serviceProxy.terminationPosition(commitPosition);
 
-            expectedAckPosition = commitPosition;
-            state(ConsensusModule.State.QUITTING);
+            state(ConsensusModule.State.TERMINATING);
+            final long nowNs = clusterTimeUnit.toNanos(clusterClock.time());
+            clusterTermination = new ClusterTermination(nowNs + ctx.terminationTimeoutNs());
+            clusterTermination.terminationPosition(memberStatusPublisher, clusterMembers, thisMember, commitPosition);
+            terminationPosition = commitPosition;
         }
     }
 
