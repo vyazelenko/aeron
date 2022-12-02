@@ -15,14 +15,26 @@
  */
 package io.aeron;
 
-import io.aeron.exceptions.*;
+import io.aeron.exceptions.AeronException;
+import io.aeron.exceptions.ChannelEndpointException;
+import io.aeron.exceptions.ClientTimeoutException;
+import io.aeron.exceptions.ConductorServiceTimeoutException;
+import io.aeron.exceptions.DriverTimeoutException;
+import io.aeron.exceptions.RegistrationException;
 import io.aeron.status.ChannelEndpointStatus;
 import io.aeron.status.HeartbeatTimestamp;
-import org.agrona.*;
+import org.agrona.CloseHelper;
+import org.agrona.DirectBuffer;
 import org.agrona.collections.ArrayListUtil;
 import org.agrona.collections.Long2ObjectHashMap;
 import org.agrona.collections.LongHashSet;
-import org.agrona.concurrent.*;
+import org.agrona.concurrent.Agent;
+import org.agrona.concurrent.AgentInvoker;
+import org.agrona.concurrent.AgentTerminationException;
+import org.agrona.concurrent.EpochClock;
+import org.agrona.concurrent.IdleStrategy;
+import org.agrona.concurrent.NanoClock;
+import org.agrona.concurrent.UnsafeBuffer;
 import org.agrona.concurrent.status.AtomicCounter;
 import org.agrona.concurrent.status.CountersManager;
 import org.agrona.concurrent.status.CountersReader;
@@ -77,6 +89,7 @@ final class ClientConductor implements Agent
     private final LongHashSet asyncCommandIdSet = new LongHashSet();
     private final AvailableImageHandler defaultAvailableImageHandler;
     private final UnavailableImageHandler defaultUnavailableImageHandler;
+    private final UnavailableImageExtendedHandler unavailableImageExtendedHandler;
     private final Long2ObjectHashMap<AvailableCounterHandler> availableCounterHandlerById = new Long2ObjectHashMap<>();
     private final Long2ObjectHashMap<UnavailableCounterHandler> unavailableCounterHandlerById =
         new Long2ObjectHashMap<>();
@@ -104,6 +117,7 @@ final class ClientConductor implements Agent
         interServiceTimeoutNs = ctx.interServiceTimeoutNs();
         defaultAvailableImageHandler = ctx.availableImageHandler();
         defaultUnavailableImageHandler = ctx.unavailableImageHandler();
+        unavailableImageExtendedHandler = ctx.unavailableImageExtendedHandler();
         driverEventsAdapter = new DriverEventsAdapter(ctx.clientId(), ctx.toClientBuffer(), this, asyncCommandIdSet);
         driverAgentInvoker = ctx.driverAgentInvoker();
         counterValuesBuffer = ctx.countersValuesBuffer();
@@ -145,7 +159,7 @@ final class ClientConductor implements Agent
 
                 final boolean isTerminating = this.isTerminating;
                 this.isTerminating = true;
-                forceCloseResources();
+                forceCloseResources("client closed");
                 notifyCloseHandlers();
 
                 try
@@ -233,7 +247,10 @@ final class ClientConductor implements Agent
         if (resource instanceof Subscription)
         {
             final Subscription subscription = (Subscription)resource;
-            subscription.internalClose(NULL_VALUE);
+            subscription.internalClose(
+                NULL_VALUE,
+                null == unavailableImageExtendedHandler ? null :
+                "error received from the driver: errorCode=" + errorCode + " message=" + message);
             resourceByRegIdMap.remove(correlationId);
         }
     }
@@ -243,6 +260,17 @@ final class ClientConductor implements Agent
         stashedChannelByRegistrationId.remove(correlationId);
         final RegistrationException ex = new RegistrationException(correlationId, codeValue, errorCode, message);
         asyncExceptionByRegIdMap.put(correlationId, ex);
+
+        final Object resource = resourceByRegIdMap.get(correlationId);
+        if (resource instanceof PendingSubscription)
+        {
+            final PendingSubscription subscription = (PendingSubscription)resource;
+            subscription.subscription.internalClose(
+                NULL_VALUE,
+                null == unavailableImageExtendedHandler ? null :
+                "error received from the driver: errorCode=" + errorCode + " message=" + message);
+            resourceByRegIdMap.remove(correlationId);
+        }
     }
 
     void onChannelEndpointError(final long correlationId, final String message)
@@ -388,7 +416,7 @@ final class ClientConductor implements Agent
         }
     }
 
-    void onUnavailableImage(final long correlationId, final long subscriptionRegistrationId)
+    void onUnavailableImage(final long correlationId, final long subscriptionRegistrationId, final String reason)
     {
         final Subscription subscription = (Subscription)resourceByRegIdMap.get(subscriptionRegistrationId);
         if (null != subscription)
@@ -400,6 +428,10 @@ final class ClientConductor implements Agent
                 if (null != handler)
                 {
                     notifyImageUnavailable(handler, image);
+                }
+                if (null != unavailableImageExtendedHandler)
+                {
+                    notifyUnavailableImageExtendedHandler(image, reason);
                 }
             }
         }
@@ -429,8 +461,9 @@ final class ClientConductor implements Agent
         if (!isClosed)
         {
             isTerminating = true;
-            forceCloseResources();
-            handleError(new ClientTimeoutException("client timeout from driver"));
+            final String reason = "client timeout from driver";
+            forceCloseResources(reason);
+            handleError(new ClientTimeoutException(reason));
         }
     }
 
@@ -746,7 +779,7 @@ final class ClientConductor implements Agent
             {
                 ensureNotReentrant();
 
-                subscription.internalClose(EXPLICIT_CLOSE_LINGER_NS);
+                subscription.internalClose(EXPLICIT_CLOSE_LINGER_NS, "subscription closed");
                 final long registrationId = subscription.registrationId();
                 if (subscription == resourceByRegIdMap.remove(registrationId))
                 {
@@ -1246,7 +1279,10 @@ final class ClientConductor implements Agent
     }
 
     void closeImages(
-        final Image[] images, final UnavailableImageHandler unavailableImageHandler, final long lingerNs)
+        final Image[] images,
+        final UnavailableImageHandler unavailableImageHandler,
+        final long lingerNs,
+        final String reason)
     {
         for (final Image image : images)
         {
@@ -1258,11 +1294,18 @@ final class ClientConductor implements Agent
             releaseLogBuffers(image.logBuffers(), image.correlationId(), lingerNs);
         }
 
-        if (null != unavailableImageHandler)
+        if (null != unavailableImageHandler || null != unavailableImageExtendedHandler)
         {
             for (final Image image : images)
             {
-                notifyImageUnavailable(unavailableImageHandler, image);
+                if (null != unavailableImageHandler)
+                {
+                    notifyImageUnavailable(unavailableImageHandler, image);
+                }
+                if (null != unavailableImageExtendedHandler)
+                {
+                    notifyUnavailableImageExtendedHandler(image, reason);
+                }
             }
         }
     }
@@ -1322,7 +1365,7 @@ final class ClientConductor implements Agent
             if (isClientApiCall(correlationId))
             {
                 isTerminating = true;
-                forceCloseResources();
+                forceCloseResources("agent termination exception: " + ex.getMessage());
             }
             throw ex;
         }
@@ -1331,11 +1374,11 @@ final class ClientConductor implements Agent
             if (driverEventsAdapter.isInvalid())
             {
                 isTerminating = true;
-                forceCloseResources();
+                forceCloseResources("driver events adapter is invalid: " + ex.getMessage());
 
                 if (!isClientApiCall(correlationId))
                 {
-                    throw new AeronException("Driver events adapter is invalid", ex);
+                    throw new AeronException("driver events adapter is invalid", ex);
                 }
             }
 
@@ -1420,11 +1463,11 @@ final class ClientConductor implements Agent
         if ((timeOfLastServiceNs + interServiceTimeoutNs) - nowNs < 0)
         {
             isTerminating = true;
-            forceCloseResources();
+            final String message = "service interval exceeded: timeout=" + interServiceTimeoutNs +
+                "ns, interval=" + (nowNs - timeOfLastServiceNs) + "ns";
+            forceCloseResources(message);
 
-            throw new ConductorServiceTimeoutException(
-                "service interval exceeded: timeout=" + interServiceTimeoutNs +
-                "ns, interval=" + (nowNs - timeOfLastServiceNs) + "ns");
+            throw new ConductorServiceTimeoutException(message);
         }
     }
 
@@ -1438,11 +1481,11 @@ final class ClientConductor implements Agent
             if (nowMs > (lastKeepAliveMs + driverTimeoutMs))
             {
                 isTerminating = true;
-                forceCloseResources();
+                final String message = "MediaDriver (" + aeron.context().aeronDirectoryName() + ") keepalive: age=" +
+                    (nowMs - lastKeepAliveMs) + "ms > timeout=" + driverTimeoutMs + "ms";
+                forceCloseResources(message);
 
-                throw new DriverTimeoutException(
-                    "MediaDriver (" + aeron.context().aeronDirectoryName() + ") keepalive: age=" +
-                    (nowMs - lastKeepAliveMs) + "ms > timeout=" + driverTimeoutMs + "ms");
+                throw new DriverTimeoutException(message);
             }
 
             if (null == heartbeatTimestamp)
@@ -1463,9 +1506,10 @@ final class ClientConductor implements Agent
                 if (!HeartbeatTimestamp.isActive(countersReader, counterId, HEARTBEAT_TYPE_ID, ctx.clientId()))
                 {
                     isTerminating = true;
-                    forceCloseResources();
+                    final String message = "unexpected close of heartbeat timestamp counter: " + counterId;
+                    forceCloseResources(message);
 
-                    throw new AeronException("unexpected close of heartbeat timestamp counter: " + counterId);
+                    throw new AeronException(message);
                 }
 
                 heartbeatTimestamp.setOrdered(nowMs);
@@ -1497,14 +1541,14 @@ final class ClientConductor implements Agent
         return workCount;
     }
 
-    private void forceCloseResources()
+    private void forceCloseResources(final String reason)
     {
         for (final Object resource : resourceByRegIdMap.values())
         {
             if (resource instanceof Subscription)
             {
                 final Subscription subscription = (Subscription)resource;
-                subscription.internalClose(NULL_VALUE);
+                subscription.internalClose(NULL_VALUE, reason);
             }
             else if (resource instanceof Publication)
             {
@@ -1557,6 +1601,31 @@ final class ClientConductor implements Agent
         try
         {
             handler.onUnavailableImage(image);
+        }
+        catch (final AgentTerminationException ex)
+        {
+            if (!isTerminating)
+            {
+                throw ex;
+            }
+            handleError(ex);
+        }
+        catch (final Exception ex)
+        {
+            handleError(ex);
+        }
+        finally
+        {
+            isInCallback = false;
+        }
+    }
+
+    private void notifyUnavailableImageExtendedHandler(final Image image, final String reason)
+    {
+        isInCallback = true;
+        try
+        {
+            unavailableImageExtendedHandler.onUnavailableImage(image, reason);
         }
         catch (final AgentTerminationException ex)
         {

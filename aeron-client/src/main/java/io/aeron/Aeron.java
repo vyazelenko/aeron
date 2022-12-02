@@ -353,8 +353,11 @@ public class Aeron implements AutoCloseable
      * Add a new {@link Subscription} for subscribing to messages from publishers.
      * <p>
      * The method will set up the {@link Subscription} to use the
-     * {@link Aeron.Context#availableImageHandler(AvailableImageHandler)} and
-     * {@link Aeron.Context#unavailableImageHandler(UnavailableImageHandler)} from the {@link Aeron.Context}.
+     * {@link Aeron.Context#availableImageHandler()} and
+     * {@link Aeron.Context#unavailableImageHandler()} from the {@link Aeron.Context}.
+     * <p>
+     * In addition, the {@link Aeron.Context#unavailableImageExtendedHandler()} will be invoked when notifying for
+     * unavailable image if it set.
      *
      * @param channel  for receiving the messages known to the media layer.
      * @param streamId within the channel scope.
@@ -369,9 +372,11 @@ public class Aeron implements AutoCloseable
      * Add a new {@link Subscription} for subscribing to messages from publishers.
      * <p>
      * This method will override the default handlers from the {@link Aeron.Context}, i.e.
-     * {@link Aeron.Context#availableImageHandler(AvailableImageHandler)} and
-     * {@link Aeron.Context#unavailableImageHandler(UnavailableImageHandler)}. Null values are valid and will
-     * result in no action being taken.
+     * {@link Aeron.Context#availableImageHandler()} and
+     * {@link Aeron.Context#unavailableImageHandler()}. Null values are valid and will result in no action being taken.
+     * <p>
+     * In addition, the {@link Aeron.Context#unavailableImageExtendedHandler()} will be invoked when notifying for
+     * unavailable image if it set.
      *
      * @param channel                 for receiving the messages known to the media layer.
      * @param streamId                within the channel scope.
@@ -391,7 +396,34 @@ public class Aeron implements AutoCloseable
     }
 
     /**
-     * Add a new {@link Subscription} for subscribing to messages from publishers.
+     * Asynchronously add a new {@link Subscription} for subscribing to messages from publishers.
+     * <p>
+     * The method will set up the {@link Subscription} to use the
+     * {@link Aeron.Context#availableImageHandler()} and
+     * {@link Aeron.Context#unavailableImageHandler()} from the {@link Aeron.Context}.
+     * <p>
+     * In addition, the {@link Aeron.Context#unavailableImageExtendedHandler()} will be invoked when notifying for
+     * unavailable image if it set.
+     *
+     * @param channel  for receiving the messages known to the media layer.
+     * @param streamId within the channel scope.
+     * @return the registration id of the subscription which can be used to get the added subscription.
+     * @see Aeron#getSubscription(long)
+     */
+    public long asyncAddSubscription(final String channel, final int streamId)
+    {
+        return conductor.asyncAddSubscription(channel, streamId);
+    }
+
+    /**
+     * Asynchronously add a new {@link Subscription} for subscribing to messages from publishers.
+     * <p>
+     * This method will override the default handlers from the {@link Aeron.Context}, i.e.
+     * {@link Aeron.Context#availableImageHandler()} and
+     * {@link Aeron.Context#unavailableImageHandler()}. Null values are valid and will result in no action being taken.
+     * <p>
+     * In addition, the {@link Aeron.Context#unavailableImageExtendedHandler()} will be invoked when notifying for
+     * unavailable image if it set.
      *
      * @param channel                 for receiving the messages known to the media layer.
      * @param streamId                within the channel scope.
@@ -400,7 +432,6 @@ public class Aeron implements AutoCloseable
      * @param unavailableImageHandler called when {@link Image}s go unavailable for consumption. Null is valid if no
      *                                action is to be taken.
      * @return the registration id of the subscription which can be used to get the added subscription.
-     * @see Aeron#addSubscription(String, int, AvailableImageHandler, UnavailableImageHandler)
      * @see Aeron#getSubscription(long)
      */
     public long asyncAddSubscription(
@@ -410,20 +441,6 @@ public class Aeron implements AutoCloseable
         final UnavailableImageHandler unavailableImageHandler)
     {
         return conductor.asyncAddSubscription(channel, streamId, availableImageHandler, unavailableImageHandler);
-    }
-
-    /**
-     * Add a new {@link Subscription} for subscribing to messages from publishers.
-     *
-     * @param channel  for receiving the messages known to the media layer.
-     * @param streamId within the channel scope.
-     * @return the registration id of the subscription which can be used to get the added subscription.
-     * @see Aeron#addSubscription(String, int)
-     * @see Aeron#getSubscription(long)
-     */
-    public long asyncAddSubscription(final String channel, final int streamId)
-    {
-        return conductor.asyncAddSubscription(channel, streamId);
     }
 
     /**
@@ -803,6 +820,7 @@ public class Aeron implements AutoCloseable
         private ErrorHandler subscriberErrorHandler;
         private AvailableImageHandler availableImageHandler;
         private UnavailableImageHandler unavailableImageHandler;
+        private UnavailableImageExtendedHandler unavailableImageExtendedHandler;
         private AvailableCounterHandler availableCounterHandler;
         private UnavailableCounterHandler unavailableCounterHandler;
         private Runnable closeHandler;
@@ -1263,6 +1281,8 @@ public class Aeron implements AutoCloseable
          *
          * @param handler Callback method for handling available image notifications.
          * @return this for a fluent API.
+         * @see Aeron#addSubscription(String, int)
+         * @see Aeron#asyncAddSubscription(String, int)
          */
         public Context availableImageHandler(final AvailableImageHandler handler)
         {
@@ -1274,6 +1294,8 @@ public class Aeron implements AutoCloseable
          * Get the default callback handler for notifying when {@link Image}s become available.
          *
          * @return the callback handler for notifying when {@link Image}s become available.
+         * @see Aeron#addSubscription(String, int)
+         * @see Aeron#asyncAddSubscription(String, int)
          */
         public AvailableImageHandler availableImageHandler()
         {
@@ -1285,10 +1307,12 @@ public class Aeron implements AutoCloseable
          *
          * @param handler Callback method for handling unavailable image notifications.
          * @return this for a fluent API.
+         * @see Aeron#addSubscription(String, int)
+         * @see Aeron#asyncAddSubscription(String, int)
          */
         public Context unavailableImageHandler(final UnavailableImageHandler handler)
         {
-            this.unavailableImageHandler = handler;
+            unavailableImageHandler = handler;
             return this;
         }
 
@@ -1296,10 +1320,35 @@ public class Aeron implements AutoCloseable
          * Get the callback handler for when an {@link Image} is unavailable.
          *
          * @return the callback handler for when an {@link Image} is unavailable.
+         * @see Aeron#addSubscription(String, int)
+         * @see Aeron#asyncAddSubscription(String, int)
          */
         public UnavailableImageHandler unavailableImageHandler()
         {
             return unavailableImageHandler;
+        }
+
+        /**
+         * Sets a callback for receiving extended information when any {@link Image} goes unavailable. This handler is
+         * not session-specific, i.e. it is invoked for all {@link Subscription}s irrespective of how they were created.
+         *
+         * @param handler callback for handling unavailable image notifications.
+         * @return this for a fluent API.
+         */
+        public Context unavailableImageExtendedHandler(final UnavailableImageExtendedHandler handler)
+        {
+            unavailableImageExtendedHandler = handler;
+            return this;
+        }
+
+        /**
+         * Get the callback handler receiving extended information when any {@link Image} goes unavailable.
+         *
+         * @return the callback handler receiving extended information when any {@link Image} goes unavailable.
+         */
+        public UnavailableImageExtendedHandler unavailableImageExtendedHandler()
+        {
+            return unavailableImageExtendedHandler;
         }
 
         /**

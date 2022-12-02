@@ -102,8 +102,10 @@ class ClientConductorTest
 
     private ClientConductor conductor;
     private final DriverProxy driverProxy = mock(DriverProxy.class);
-    private final AvailableImageHandler mockAvailableImageHandler = mock(AvailableImageHandler.class);
-    private final UnavailableImageHandler mockUnavailableImageHandler = mock(UnavailableImageHandler.class);
+    private final AvailableImageHandler availableImageHandler = mock(AvailableImageHandler.class);
+    private final UnavailableImageHandler unavailableImageHandler = mock(UnavailableImageHandler.class);
+    private final UnavailableImageExtendedHandler unavailableImageExtendedHandler =
+        mock(UnavailableImageExtendedHandler.class);
     private final Runnable mockCloseHandler = mock(Runnable.class);
     private final LogBuffersFactory logBuffersFactory = mock(LogBuffersFactory.class);
     private final Lock mockClientLock = mock(Lock.class);
@@ -122,8 +124,9 @@ class ClientConductorTest
             .driverProxy(driverProxy)
             .logBuffersFactory(logBuffersFactory)
             .errorHandler(mockClientErrorHandler)
-            .availableImageHandler(mockAvailableImageHandler)
-            .unavailableImageHandler(mockUnavailableImageHandler)
+            .availableImageHandler(availableImageHandler)
+            .unavailableImageHandler(unavailableImageHandler)
+            .unavailableImageExtendedHandler(unavailableImageExtendedHandler)
             .closeHandler(mockCloseHandler)
             .keepAliveIntervalNs(KEEP_ALIVE_INTERVAL)
             .driverTimeoutMs(AWAIT_TIMEOUT)
@@ -467,11 +470,13 @@ class ClientConductorTest
 
         assertFalse(subscription.hasNoImages());
         assertTrue(subscription.isConnected());
-        verify(mockAvailableImageHandler).onAvailableImage(any(Image.class));
+        verify(availableImageHandler).onAvailableImage(any(Image.class));
 
-        conductor.onUnavailableImage(CORRELATION_ID, subscription.registrationId());
+        final String reason = "this is the reason why Image went unavailable";
+        conductor.onUnavailableImage(CORRELATION_ID, subscription.registrationId(), reason);
 
-        verify(mockUnavailableImageHandler).onUnavailableImage(any(Image.class));
+        verify(unavailableImageHandler).onUnavailableImage(any(Image.class));
+        verify(unavailableImageExtendedHandler).onUnavailableImage(any(Image.class), eq(reason));
         assertTrue(subscription.hasNoImages());
         assertFalse(subscription.isConnected());
     }
@@ -488,16 +493,17 @@ class ClientConductorTest
             SOURCE_INFO);
 
         verify(logBuffersFactory, never()).map(anyString());
-        verify(mockAvailableImageHandler, never()).onAvailableImage(any(Image.class));
+        verify(availableImageHandler, never()).onAvailableImage(any(Image.class));
     }
 
     @Test
     void shouldIgnoreUnknownInactiveImage()
     {
-        conductor.onUnavailableImage(CORRELATION_ID_2, SUBSCRIPTION_POSITION_REGISTRATION_ID);
+        conductor.onUnavailableImage(CORRELATION_ID_2, SUBSCRIPTION_POSITION_REGISTRATION_ID, "test");
 
         verify(logBuffersFactory, never()).map(anyString());
-        verify(mockUnavailableImageHandler, never()).onUnavailableImage(any(Image.class));
+        verify(unavailableImageHandler, never()).onUnavailableImage(any(Image.class));
+        verify(unavailableImageExtendedHandler, never()).onUnavailableImage(any(Image.class), anyString());
     }
 
     @Test
