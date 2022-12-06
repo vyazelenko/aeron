@@ -16,19 +16,29 @@
 package io.aeron;
 
 /**
- * Interface for delivery of inactive image notification to a {@link Subscription}.
+ * Provides details of why an {@link Image} became unavailable.
  */
-@FunctionalInterface
-public interface UnavailableImageExtendedHandler
+public final class UnavailableImageReason
 {
+    private final String reason;
+
     /**
-     * Method called by Aeron to deliver notification that an {@link Image} is no longer available for polling.
-     * <p>
-     * Within this callback reentrant calls to the {@link Aeron} client are not permitted and
-     * will result in undefined behaviour.
+     * Create new instance with given arguments.
      *
-     * @param image  that is no longer available for polling.
-     * @param reason containing detailed information on why the image went unavailable.
+     * @param reason the image goes unavailable.
      */
-    void onUnavailableImage(Image image, UnavailableImageReason reason);
+    public UnavailableImageReason(final String reason)
+    {
+        this.reason = reason;
+    }
+
+    /**
+     * Returns the reason that describes why the {@link Image} went unavailable.
+     *
+     * @return the reason the {@link Image} went unavailable.
+     */
+    public String reason()
+    {
+        return reason;
+    }
 }

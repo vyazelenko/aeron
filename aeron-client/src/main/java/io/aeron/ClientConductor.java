@@ -239,6 +239,11 @@ final class ClientConductor implements Agent
         return isTerminating;
     }
 
+    Long2ObjectHashMap<Object> resourceByRegIdMap()
+    {
+        return resourceByRegIdMap;
+    }
+
     void onError(final long correlationId, final int codeValue, final ErrorCode errorCode, final String message)
     {
         driverException = new RegistrationException(correlationId, codeValue, errorCode, message);
@@ -247,11 +252,7 @@ final class ClientConductor implements Agent
         if (resource instanceof Subscription)
         {
             final Subscription subscription = (Subscription)resource;
-            subscription.internalClose(
-                NULL_VALUE,
-                null == unavailableImageExtendedHandler ? null :
-                "error received from the driver: errorCode=" + errorCode + " message=" + message);
-            resourceByRegIdMap.remove(correlationId);
+            closeSubscriptionWithError(subscription, errorCode, message);
         }
     }
 
@@ -265,11 +266,7 @@ final class ClientConductor implements Agent
         if (resource instanceof PendingSubscription)
         {
             final PendingSubscription subscription = (PendingSubscription)resource;
-            subscription.subscription.internalClose(
-                NULL_VALUE,
-                null == unavailableImageExtendedHandler ? null :
-                "error received from the driver: errorCode=" + errorCode + " message=" + message);
-            resourceByRegIdMap.remove(correlationId);
+            closeSubscriptionWithError(subscription.subscription, errorCode, message);
         }
     }
 
@@ -385,38 +382,50 @@ final class ClientConductor implements Agent
         final Subscription subscription = (Subscription)resourceByRegIdMap.get(subscriptionRegistrationId);
         if (null != subscription)
         {
-            final Image image = new Image(
-                subscription,
-                sessionId,
-                new UnsafeBufferPosition(counterValuesBuffer, subscriberPositionId),
-                logBuffers(correlationId, logFileName, subscription.channel()),
-                ctx.subscriberErrorHandler(),
-                sourceIdentity,
-                correlationId);
+            addImage(subscription, correlationId, sessionId, subscriberPositionId, logFileName, sourceIdentity);
+        }
+    }
 
-            subscription.addImage(image);
+    void addImage(
+        final Subscription subscription,
+        final long correlationId,
+        final int sessionId,
+        final int subscriberPositionId,
+        final String logFileName,
+        final String sourceIdentity)
+    {
+        final Image image = new Image(
+            subscription,
+            sessionId,
+            new UnsafeBufferPosition(counterValuesBuffer, subscriberPositionId),
+            logBuffers(correlationId, logFileName, subscription.channel()),
+            ctx.subscriberErrorHandler(),
+            sourceIdentity,
+            correlationId);
 
-            final AvailableImageHandler handler = subscription.availableImageHandler();
-            if (null != handler)
+        subscription.addImage(image);
+
+        final AvailableImageHandler handler = subscription.availableImageHandler();
+        if (null != handler)
+        {
+            isInCallback = true;
+            try
             {
-                isInCallback = true;
-                try
-                {
-                    handler.onAvailableImage(image);
-                }
-                catch (final Exception ex)
-                {
-                    handleError(ex);
-                }
-                finally
-                {
-                    isInCallback = false;
-                }
+                handler.onAvailableImage(image);
+            }
+            catch (final Exception ex)
+            {
+                handleError(ex);
+            }
+            finally
+            {
+                isInCallback = false;
             }
         }
     }
 
-    void onUnavailableImage(final long correlationId, final long subscriptionRegistrationId, final String reason)
+    void onUnavailableImage(
+        final long correlationId, final long subscriptionRegistrationId, final UnavailableImageReason reason)
     {
         final Subscription subscription = (Subscription)resourceByRegIdMap.get(subscriptionRegistrationId);
         if (null != subscription)
@@ -779,7 +788,9 @@ final class ClientConductor implements Agent
             {
                 ensureNotReentrant();
 
-                subscription.internalClose(EXPLICIT_CLOSE_LINGER_NS, "subscription closed");
+                subscription.internalClose(
+                    EXPLICIT_CLOSE_LINGER_NS,
+                    null == unavailableImageExtendedHandler ? null : new UnavailableImageReason("subscription closed"));
                 final long registrationId = subscription.registrationId();
                 if (subscription == resourceByRegIdMap.remove(registrationId))
                 {
@@ -1282,7 +1293,7 @@ final class ClientConductor implements Agent
         final Image[] images,
         final UnavailableImageHandler unavailableImageHandler,
         final long lingerNs,
-        final String reason)
+        final UnavailableImageReason reason)
     {
         for (final Image image : images)
         {
@@ -1329,6 +1340,16 @@ final class ClientConductor implements Agent
         {
             throw new AeronException("reentrant calls not permitted during callbacks");
         }
+    }
+
+    private void closeSubscriptionWithError(
+        final Subscription subscription, final ErrorCode code, final String message)
+    {
+        subscription.internalClose(
+            NULL_VALUE,
+            null == unavailableImageExtendedHandler ? null :
+            new UnavailableImageReason("error received from the driver: code=" + code + " message=" + message));
+        resourceByRegIdMap.remove(subscription.registrationId());
     }
 
     private LogBuffers logBuffers(final long registrationId, final String logFileName, final String channel)
@@ -1481,7 +1502,7 @@ final class ClientConductor implements Agent
             if (nowMs > (lastKeepAliveMs + driverTimeoutMs))
             {
                 isTerminating = true;
-                final String message = "MediaDriver (" + aeron.context().aeronDirectoryName() + ") keepalive: age=" +
+                final String message = "driver (" + aeron.context().aeronDirectoryName() + ") keepalive: age=" +
                     (nowMs - lastKeepAliveMs) + "ms > timeout=" + driverTimeoutMs + "ms";
                 forceCloseResources(message);
 
@@ -1543,12 +1564,13 @@ final class ClientConductor implements Agent
 
     private void forceCloseResources(final String reason)
     {
+        final UnavailableImageReason unavailableImageReason = new UnavailableImageReason(reason);
         for (final Object resource : resourceByRegIdMap.values())
         {
             if (resource instanceof Subscription)
             {
                 final Subscription subscription = (Subscription)resource;
-                subscription.internalClose(NULL_VALUE, reason);
+                subscription.internalClose(NULL_VALUE, unavailableImageReason);
             }
             else if (resource instanceof Publication)
             {
@@ -1620,7 +1642,7 @@ final class ClientConductor implements Agent
         }
     }
 
-    private void notifyUnavailableImageExtendedHandler(final Image image, final String reason)
+    private void notifyUnavailableImageExtendedHandler(final Image image, final UnavailableImageReason reason)
     {
         isInCallback = true;
         try
@@ -1704,9 +1726,9 @@ final class ClientConductor implements Agent
         return null;
     }
 
-    private static final class PendingSubscription
+    static final class PendingSubscription
     {
-        private final Subscription subscription;
+        final Subscription subscription;
 
         private PendingSubscription(final Subscription subscription)
         {

@@ -580,7 +580,7 @@ public final class Subscription extends SubscriptionFields implements AutoClosea
         channelStatusId = id;
     }
 
-    void internalClose(final long lingerDurationNs, final String reason)
+    void internalClose(final long lingerDurationNs, final UnavailableImageReason reason)
     {
         final Image[] images = this.images;
         this.images = EMPTY_IMAGES;

@@ -16,22 +16,30 @@
 package io.aeron;
 
 import io.aeron.command.*;
+import io.aeron.exceptions.AeronException;
+import io.aeron.exceptions.ClientTimeoutException;
 import io.aeron.exceptions.ConductorServiceTimeoutException;
 import io.aeron.exceptions.DriverTimeoutException;
 import io.aeron.exceptions.RegistrationException;
 import io.aeron.exceptions.TimeoutException;
 import io.aeron.logbuffer.LogBufferDescriptor;
 import io.aeron.protocol.DataHeaderFlyweight;
+import io.aeron.status.HeartbeatTimestamp;
 import io.aeron.test.InterruptAfter;
 import io.aeron.test.InterruptingTestCallback;
 import org.agrona.ErrorHandler;
+import org.agrona.ExpandableArrayBuffer;
 import org.agrona.MutableDirectBuffer;
 import org.agrona.concurrent.*;
 import org.agrona.concurrent.broadcast.CopyBroadcastReceiver;
+import org.agrona.concurrent.status.CountersManager;
+import org.hamcrest.Matchers;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Lock;
 import java.util.function.ToIntFunction;
@@ -39,8 +47,11 @@ import java.util.function.ToIntFunction;
 import static io.aeron.ErrorCode.INVALID_CHANNEL;
 import static io.aeron.logbuffer.LogBufferDescriptor.PARTITION_COUNT;
 import static io.aeron.logbuffer.LogBufferDescriptor.TERM_MIN_LENGTH;
+import static io.aeron.status.HeartbeatTimestamp.HEARTBEAT_TYPE_ID;
 import static java.lang.Boolean.TRUE;
 import static java.nio.ByteBuffer.allocateDirect;
+import static org.agrona.concurrent.status.CountersReader.COUNTER_LENGTH;
+import static org.agrona.concurrent.status.CountersReader.METADATA_LENGTH;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.sameInstance;
@@ -90,7 +101,10 @@ class ClientConductorTest
 
     private final CopyBroadcastReceiver mockToClientReceiver = mock(CopyBroadcastReceiver.class);
     private final UnsafeBuffer counterValuesBuffer = new UnsafeBuffer(new byte[COUNTER_BUFFER_LENGTH]);
-    private final UnsafeBuffer counterMetaDataBuffer = new UnsafeBuffer(new byte[COUNTER_BUFFER_LENGTH]);
+    private final UnsafeBuffer counterMetaDataBuffer = new UnsafeBuffer(
+        new byte[COUNTER_BUFFER_LENGTH * (METADATA_LENGTH / COUNTER_LENGTH)]);
+
+    private final ExpandableArrayBuffer tempBuffer = new ExpandableArrayBuffer();
 
     private long timeMs = 0;
     private final EpochClock epochClock = () -> timeMs += 10;
@@ -135,12 +149,13 @@ class ClientConductorTest
         ctx.countersMetaDataBuffer(counterMetaDataBuffer);
         ctx.countersValuesBuffer(counterValuesBuffer);
 
+        when(mockAeron.context()).thenReturn(ctx);
+
         when(mockClientLock.tryLock()).thenReturn(TRUE);
 
         when(driverProxy.addPublication(CHANNEL, STREAM_ID_1)).thenReturn(CORRELATION_ID);
         when(driverProxy.addPublication(CHANNEL, STREAM_ID_2)).thenReturn(CORRELATION_ID_2);
         when(driverProxy.removePublication(CORRELATION_ID)).thenReturn(CLOSE_CORRELATION_ID);
-        when(driverProxy.addSubscription(anyString(), anyInt())).thenReturn(CORRELATION_ID);
         when(driverProxy.removeSubscription(CORRELATION_ID)).thenReturn(CLOSE_CORRELATION_ID);
 
         conductor = new ClientConductor(ctx, mockAeron);
@@ -180,8 +195,6 @@ class ClientConductorTest
         final LogBuffers logBuffersSession1 = mock(LogBuffers.class);
         final LogBuffers logBuffersSession2 = mock(LogBuffers.class);
 
-        when(logBuffersFactory.map(SESSION_ID_1 + "-log")).thenReturn(logBuffersSession1);
-        when(logBuffersFactory.map(SESSION_ID_2 + "-log")).thenReturn(logBuffersSession2);
         when(logBuffersFactory.map(SESSION_ID_1 + "-log")).thenReturn(logBuffersSession1);
         when(logBuffersFactory.map(SESSION_ID_2 + "-log")).thenReturn(logBuffersSession2);
 
@@ -355,16 +368,7 @@ class ClientConductorTest
     @Test
     void addSubscriptionShouldNotifyMediaDriver()
     {
-        whenReceiveBroadcastOnMessage(
-            ControlProtocolEvents.ON_SUBSCRIPTION_READY,
-            subscriptionReadyBuffer,
-            (buffer) ->
-            {
-                subscriptionReady.correlationId(CORRELATION_ID);
-                return SubscriptionReadyFlyweight.LENGTH;
-            });
-
-        conductor.addSubscription(CHANNEL, STREAM_ID_1);
+        addSubscription(CHANNEL, STREAM_ID_1, CORRELATION_ID, null, null);
 
         verify(driverProxy).addSubscription(CHANNEL, STREAM_ID_1);
     }
@@ -372,16 +376,7 @@ class ClientConductorTest
     @Test
     void closingSubscriptionShouldNotifyMediaDriver()
     {
-        whenReceiveBroadcastOnMessage(
-            ControlProtocolEvents.ON_SUBSCRIPTION_READY,
-            subscriptionReadyBuffer,
-            (buffer) ->
-            {
-                subscriptionReady.correlationId(CORRELATION_ID);
-                return SubscriptionReadyFlyweight.LENGTH;
-            });
-
-        final Subscription subscription = conductor.addSubscription(CHANNEL, STREAM_ID_1);
+        final Subscription subscription = addSubscription(CHANNEL, STREAM_ID_1, CORRELATION_ID, null, null);
 
         whenReceiveBroadcastOnMessage(
             ControlProtocolEvents.ON_OPERATION_SUCCESS,
@@ -407,6 +402,8 @@ class ClientConductorTest
     @Test
     void shouldFailToAddSubscriptionOnMediaDriverError()
     {
+        when(driverProxy.addSubscription(anyString(), anyInt())).thenReturn(CORRELATION_ID);
+
         whenReceiveBroadcastOnMessage(
             ControlProtocolEvents.ON_ERROR,
             errorMessageBuffer,
@@ -424,24 +421,9 @@ class ClientConductorTest
     @Test
     void clientNotifiedOfNewImageShouldMapLogFile()
     {
-        whenReceiveBroadcastOnMessage(
-            ControlProtocolEvents.ON_SUBSCRIPTION_READY,
-            subscriptionReadyBuffer,
-            (buffer) ->
-            {
-                subscriptionReady.correlationId(CORRELATION_ID);
-                return SubscriptionReadyFlyweight.LENGTH;
-            });
+        final Subscription subscription = addSubscription(CHANNEL, STREAM_ID_1, CORRELATION_ID, null, null);
 
-        final Subscription subscription = conductor.addSubscription(CHANNEL, STREAM_ID_1);
-
-        conductor.onAvailableImage(
-            CORRELATION_ID,
-            SESSION_ID_1,
-            subscription.registrationId(),
-            SUBSCRIPTION_POSITION_ID,
-            SESSION_ID_1 + "-log",
-            SOURCE_INFO);
+        addImage(subscription, CORRELATION_ID_2, SESSION_ID_1);
 
         verify(logBuffersFactory).map(eq(SESSION_ID_1 + "-log"));
     }
@@ -449,30 +431,17 @@ class ClientConductorTest
     @Test
     void clientNotifiedOfNewAndInactiveImages()
     {
-        whenReceiveBroadcastOnMessage(
-            ControlProtocolEvents.ON_SUBSCRIPTION_READY,
-            subscriptionReadyBuffer,
-            (buffer) ->
-            {
-                subscriptionReady.correlationId(CORRELATION_ID);
-                return SubscriptionReadyFlyweight.LENGTH;
-            });
+        final Subscription subscription = addSubscription(
+            CHANNEL, STREAM_ID_1, CORRELATION_ID, availableImageHandler, unavailableImageHandler);
 
-        final Subscription subscription = conductor.addSubscription(CHANNEL, STREAM_ID_1);
-
-        conductor.onAvailableImage(
-            CORRELATION_ID,
-            SESSION_ID_1,
-            subscription.registrationId(),
-            SUBSCRIPTION_POSITION_ID,
-            SESSION_ID_1 + "-log",
-            SOURCE_INFO);
+        addImage(subscription, CORRELATION_ID, SESSION_ID_1);
 
         assertFalse(subscription.hasNoImages());
         assertTrue(subscription.isConnected());
         verify(availableImageHandler).onAvailableImage(any(Image.class));
 
-        final String reason = "this is the reason why Image went unavailable";
+        final UnavailableImageReason reason =
+            new UnavailableImageReason("this is the reason why Image went unavailable");
         conductor.onUnavailableImage(CORRELATION_ID, subscription.registrationId(), reason);
 
         verify(unavailableImageHandler).onUnavailableImage(any(Image.class));
@@ -499,11 +468,10 @@ class ClientConductorTest
     @Test
     void shouldIgnoreUnknownInactiveImage()
     {
-        conductor.onUnavailableImage(CORRELATION_ID_2, SUBSCRIPTION_POSITION_REGISTRATION_ID, "test");
+        conductor.onUnavailableImage(
+            CORRELATION_ID_2, SUBSCRIPTION_POSITION_REGISTRATION_ID, new UnavailableImageReason("test"));
 
-        verify(logBuffersFactory, never()).map(anyString());
-        verify(unavailableImageHandler, never()).onUnavailableImage(any(Image.class));
-        verify(unavailableImageExtendedHandler, never()).onUnavailableImage(any(Image.class), anyString());
+        verifyNoInteractions(logBuffersFactory, unavailableImageHandler, unavailableImageExtendedHandler);
     }
 
     @Test
@@ -566,7 +534,406 @@ class ClientConductorTest
         assertFalse(conductor.isClosed());
     }
 
-    void whenReceiveBroadcastOnMessage(
+    @Test
+    void onClientTimeoutForceClosesResources()
+    {
+        suppressPrintError = true;
+
+        final Subscription subscription1 = addSubscription(CHANNEL, STREAM_ID_1, 10, null, null);
+        addImage(subscription1, 20, SESSION_ID_1);
+        addImage(subscription1, 30, SESSION_ID_2);
+
+        final AvailableImageHandler availableImageHandler = mock(AvailableImageHandler.class);
+        final UnavailableImageHandler unavailableImageHandler = mock(UnavailableImageHandler.class);
+        final Subscription subscription2 = addSubscription(
+            CHANNEL, STREAM_ID_2, 40, availableImageHandler, unavailableImageHandler);
+        addImage(subscription2, 50, SESSION_ID_1);
+
+        conductor.onClientTimeout();
+
+        final String expectedErrorMessage = "client timeout from driver";
+        final ArgumentCaptor<Throwable> errorCapture = ArgumentCaptor.forClass(Throwable.class);
+        verify(mockClientErrorHandler).onError(errorCapture.capture());
+        final Throwable exception = errorCapture.getValue();
+        assertInstanceOf(ClientTimeoutException.class, exception);
+        assertEquals("FATAL - " + expectedErrorMessage, exception.getMessage());
+
+        final ArgumentCaptor<Image> imageArgumentCaptor = ArgumentCaptor.forClass(Image.class);
+        verify(availableImageHandler).onAvailableImage(imageArgumentCaptor.capture());
+        verify(unavailableImageHandler).onUnavailableImage(imageArgumentCaptor.getValue());
+
+        final ArgumentCaptor<UnavailableImageReason> imageReasonArgumentCaptor =
+            ArgumentCaptor.forClass(UnavailableImageReason.class);
+        verify(unavailableImageExtendedHandler, times(3)).onUnavailableImage(
+            any(), imageReasonArgumentCaptor.capture());
+        final UnavailableImageReason reason = imageReasonArgumentCaptor.getValue();
+        assertEquals(expectedErrorMessage, reason.reason());
+        final List<UnavailableImageReason> reasons = imageReasonArgumentCaptor.getAllValues();
+        assertEquals(3, reasons.size());
+        for (final UnavailableImageReason unavailableImageReason : reasons)
+        {
+            assertSame(reason, unavailableImageReason);
+        }
+    }
+
+    @Test
+    void onCloseForceClosesResources()
+    {
+        final Subscription subscription1 =
+            addSubscription(CHANNEL, STREAM_ID_1, 1, availableImageHandler, unavailableImageHandler);
+        addImage(subscription1, 2, SESSION_ID_1);
+        addImage(subscription1, 3, SESSION_ID_2);
+
+        final Subscription subscription2 = addSubscription(
+            CHANNEL, STREAM_ID_2, 4, null, null);
+        addImage(subscription2, 5, SESSION_ID_1);
+
+        conductor.onClose();
+
+        final String expectedErrorMessage = "client closed";
+
+        final ArgumentCaptor<Image> imageArgumentCaptor = ArgumentCaptor.forClass(Image.class);
+        verify(availableImageHandler, times(2)).onAvailableImage(imageArgumentCaptor.capture());
+        verify(unavailableImageHandler).onUnavailableImage(imageArgumentCaptor.getAllValues().get(0));
+        verify(unavailableImageHandler).onUnavailableImage(imageArgumentCaptor.getAllValues().get(1));
+
+        final ArgumentCaptor<UnavailableImageReason> imageReasonArgumentCaptor =
+            ArgumentCaptor.forClass(UnavailableImageReason.class);
+        verify(unavailableImageExtendedHandler, times(3)).onUnavailableImage(
+            any(), imageReasonArgumentCaptor.capture());
+        final UnavailableImageReason reason = imageReasonArgumentCaptor.getValue();
+        assertEquals(expectedErrorMessage, reason.reason());
+        final List<UnavailableImageReason> reasons = imageReasonArgumentCaptor.getAllValues();
+        assertEquals(3, reasons.size());
+        for (final UnavailableImageReason unavailableImageReason : reasons)
+        {
+            assertSame(reason, unavailableImageReason);
+        }
+    }
+
+    @Test
+    void forceClosesResourcesUponConductorServiceTimeoutException()
+    {
+        final Subscription subscription1 =
+            addSubscription(CHANNEL, STREAM_ID_1, 1, availableImageHandler, unavailableImageHandler);
+        addImage(subscription1, 2, SESSION_ID_1);
+
+        final Subscription subscription2 = addSubscription(
+            CHANNEL, STREAM_ID_2, 3, null, null);
+        addImage(subscription2, 4, SESSION_ID_1);
+
+        timeNs += TimeUnit.HOURS.toNanos(1);
+
+        final ConductorServiceTimeoutException exception = assertThrowsExactly(
+            ConductorServiceTimeoutException.class, () -> conductor.removeDestination(111, "aeron:ipc"));
+        assertThat(exception.getMessage(),
+            Matchers.startsWith("FATAL - service interval exceeded: timeout=" +
+            mockAeron.context().interServiceTimeoutNs() + "ns, interval="));
+
+        final String expectedErrorMessage = "client closed";
+
+        final ArgumentCaptor<Image> imageArgumentCaptor = ArgumentCaptor.forClass(Image.class);
+        verify(availableImageHandler).onAvailableImage(imageArgumentCaptor.capture());
+        verify(unavailableImageHandler).onUnavailableImage(imageArgumentCaptor.getValue());
+
+        final ArgumentCaptor<UnavailableImageReason> imageReasonArgumentCaptor =
+            ArgumentCaptor.forClass(UnavailableImageReason.class);
+        verify(unavailableImageExtendedHandler, times(2)).onUnavailableImage(
+            any(), imageReasonArgumentCaptor.capture());
+        final UnavailableImageReason reason = imageReasonArgumentCaptor.getValue();
+        assertEquals(exception.getMessage().substring(8), reason.reason());
+    }
+
+    @Test
+    void forceClosesResourcesUponDriverTimeoutException()
+    {
+        final Subscription subscription1 =
+            addSubscription(CHANNEL, STREAM_ID_1, 1, availableImageHandler, unavailableImageHandler);
+        addImage(subscription1, 2, SESSION_ID_1);
+
+        final Subscription subscription2 = addSubscription(
+            CHANNEL, STREAM_ID_2, 3, null, null);
+        addImage(subscription2, 4, SESSION_ID_1);
+
+        timeNs += mockAeron.context().keepAliveIntervalNs();
+        timeMs += mockAeron.context().driverTimeoutMs() * 2;
+
+        final DriverTimeoutException exception = assertThrowsExactly(
+            DriverTimeoutException.class, () -> conductor.removeDestination(111, "aeron:ipc"));
+        assertThat(exception.getMessage(), Matchers.allOf(
+            Matchers.startsWith("FATAL - driver (" + mockAeron.context().aeronDirectoryName() + ") keepalive: age="),
+            Matchers.endsWith("ms > timeout=" + mockAeron.context().driverTimeoutMs() + "ms")));
+
+        final ArgumentCaptor<Image> imageArgumentCaptor = ArgumentCaptor.forClass(Image.class);
+        verify(availableImageHandler).onAvailableImage(imageArgumentCaptor.capture());
+        verify(unavailableImageHandler).onUnavailableImage(imageArgumentCaptor.getValue());
+
+        final ArgumentCaptor<UnavailableImageReason> imageReasonArgumentCaptor =
+            ArgumentCaptor.forClass(UnavailableImageReason.class);
+        verify(unavailableImageExtendedHandler, times(2)).onUnavailableImage(
+            any(), imageReasonArgumentCaptor.capture());
+        final UnavailableImageReason reason = imageReasonArgumentCaptor.getValue();
+        assertEquals(exception.getMessage().substring(8), reason.reason());
+    }
+
+    @Test
+    void forceClosesResourcesIfHeartbeatTimestampIsInactive()
+    {
+        final Subscription subscription1 =
+            addSubscription(CHANNEL, STREAM_ID_1, 1, availableImageHandler, unavailableImageHandler);
+        addImage(subscription1, 2, SESSION_ID_1);
+
+        final Subscription subscription2 = addSubscription(
+            CHANNEL, STREAM_ID_2, 3, null, null);
+        addImage(subscription2, 4, SESSION_ID_1);
+
+        final CountersManager countersManager = new CountersManager(mockAeron.context()
+            .countersMetaDataBuffer(), mockAeron.context().countersValuesBuffer());
+        final int counterId = HeartbeatTimestamp.allocateCounterId(
+            tempBuffer, "client-heartbeat", HEARTBEAT_TYPE_ID, countersManager, mockAeron.clientId());
+        assertTrue(HeartbeatTimestamp.isActive(countersManager, counterId, HEARTBEAT_TYPE_ID, mockAeron.clientId()));
+        final String errorMessage = "unexpected close of heartbeat timestamp counter: " + counterId;
+
+        timeNs += mockAeron.context().keepAliveIntervalNs();
+        // force create HeartbeatTimestamp instance
+        assertThrowsExactly(
+            DriverTimeoutException.class, () -> conductor.removeDestination(111, "aeron:ipc"));
+
+        timeNs += mockAeron.context().keepAliveIntervalNs();
+        countersManager.free(counterId);
+        final AeronException exception = assertThrowsExactly(
+            AeronException.class, () -> conductor.removeDestination(111, "aeron:ipc"));
+        assertEquals("ERROR - " + errorMessage, exception.getMessage());
+
+        final ArgumentCaptor<Image> imageArgumentCaptor = ArgumentCaptor.forClass(Image.class);
+        verify(availableImageHandler).onAvailableImage(imageArgumentCaptor.capture());
+        verify(unavailableImageHandler).onUnavailableImage(imageArgumentCaptor.getValue());
+
+        final ArgumentCaptor<UnavailableImageReason> imageReasonArgumentCaptor =
+            ArgumentCaptor.forClass(UnavailableImageReason.class);
+        verify(unavailableImageExtendedHandler, times(2)).onUnavailableImage(
+            any(), imageReasonArgumentCaptor.capture());
+        final UnavailableImageReason reason = imageReasonArgumentCaptor.getValue();
+        assertEquals(errorMessage, reason.reason());
+    }
+
+    @Test
+    void forceClosesResourcesUponAgentTerminationExceptionDuringClientRequest()
+    {
+        final Subscription subscription1 =
+            addSubscription(CHANNEL, STREAM_ID_1, 1, availableImageHandler, unavailableImageHandler);
+        addImage(subscription1, 2, SESSION_ID_1);
+
+        final Subscription subscription2 = addSubscription(
+            CHANNEL, STREAM_ID_2, 3, null, null);
+        addImage(subscription2, 4, SESSION_ID_1);
+
+        whenReceiveBroadcastOnMessage(
+            ControlProtocolEvents.ON_SUBSCRIPTION_READY,
+            subscriptionReadyBuffer,
+            (buffer) ->
+            {
+                throw new AgentTerminationException("BOO");
+            });
+
+        final AgentTerminationException exception = assertThrowsExactly(
+            AgentTerminationException.class, () -> conductor.addSubscription("aeron:ipc", 333));
+        assertEquals("BOO", exception.getMessage());
+
+        final ArgumentCaptor<Image> imageArgumentCaptor = ArgumentCaptor.forClass(Image.class);
+        verify(availableImageHandler).onAvailableImage(imageArgumentCaptor.capture());
+        verify(unavailableImageHandler).onUnavailableImage(imageArgumentCaptor.getValue());
+
+        final ArgumentCaptor<UnavailableImageReason> imageReasonArgumentCaptor =
+            ArgumentCaptor.forClass(UnavailableImageReason.class);
+        verify(unavailableImageExtendedHandler, times(2)).onUnavailableImage(
+            any(), imageReasonArgumentCaptor.capture());
+        final UnavailableImageReason reason = imageReasonArgumentCaptor.getValue();
+        assertEquals("agent termination exception: " + exception.getMessage(), reason.reason());
+    }
+
+    @Test
+    void forceClosesResourcesIfDriverEventsAdapterIsInvalid()
+    {
+        final Subscription subscription1 =
+            addSubscription(CHANNEL, STREAM_ID_1, 1, availableImageHandler, unavailableImageHandler);
+        addImage(subscription1, 2, SESSION_ID_1);
+        addImage(subscription1, 3, SESSION_ID_2);
+
+        final Subscription subscription2 = addSubscription(
+            CHANNEL, STREAM_ID_2, 4, null, null);
+        addImage(subscription2, 5, SESSION_ID_2);
+
+        whenReceiveBroadcastOnMessage(
+            ControlProtocolEvents.ON_SUBSCRIPTION_READY,
+            subscriptionReadyBuffer,
+            (buffer) ->
+            {
+                throw new IllegalStateException("crap");
+            });
+
+        final IllegalStateException exception = assertThrowsExactly(
+            IllegalStateException.class, () -> conductor.addSubscription("aeron:ipc", 333));
+        assertEquals("crap", exception.getMessage());
+
+        final ArgumentCaptor<Image> imageArgumentCaptor = ArgumentCaptor.forClass(Image.class);
+        verify(availableImageHandler, times(2)).onAvailableImage(imageArgumentCaptor.capture());
+        verify(unavailableImageHandler).onUnavailableImage(imageArgumentCaptor.getAllValues().get(0));
+        verify(unavailableImageHandler).onUnavailableImage(imageArgumentCaptor.getAllValues().get(1));
+
+        final ArgumentCaptor<UnavailableImageReason> imageReasonArgumentCaptor =
+            ArgumentCaptor.forClass(UnavailableImageReason.class);
+        verify(unavailableImageExtendedHandler, times(3)).onUnavailableImage(
+            any(), imageReasonArgumentCaptor.capture());
+        final UnavailableImageReason reason = imageReasonArgumentCaptor.getValue();
+        assertEquals("driver events adapter is invalid: " + exception.getMessage(), reason.reason());
+    }
+
+    @Test
+    void subscriptionCloseNotifiesUnavailableImageExtendedHandler()
+    {
+        final Subscription subscription =
+            addSubscription(CHANNEL, STREAM_ID_1, 1, availableImageHandler, unavailableImageHandler);
+        addImage(subscription, 2, SESSION_ID_1);
+        addImage(subscription, 3, SESSION_ID_2);
+
+        subscription.close();
+
+        final ArgumentCaptor<Image> imageArgumentCaptor = ArgumentCaptor.forClass(Image.class);
+        verify(availableImageHandler, times(2)).onAvailableImage(imageArgumentCaptor.capture());
+        verify(unavailableImageHandler).onUnavailableImage(imageArgumentCaptor.getAllValues().get(0));
+        verify(unavailableImageHandler).onUnavailableImage(imageArgumentCaptor.getAllValues().get(1));
+
+        final ArgumentCaptor<UnavailableImageReason> imageReasonArgumentCaptor =
+            ArgumentCaptor.forClass(UnavailableImageReason.class);
+        verify(unavailableImageExtendedHandler, times(2)).onUnavailableImage(
+            any(), imageReasonArgumentCaptor.capture());
+        final UnavailableImageReason reason = imageReasonArgumentCaptor.getValue();
+        assertEquals("subscription closed", reason.reason());
+        for (final UnavailableImageReason unavailableImageReason : imageReasonArgumentCaptor.getAllValues())
+        {
+            assertSame(reason, unavailableImageReason);
+        }
+    }
+
+    @Test
+    void subscriptionCloseNotifiesUnavailableImageHandler()
+    {
+        final Aeron.Context context = mockAeron.context();
+        context.unavailableImageExtendedHandler(null);
+
+        conductor = new ClientConductor(context, mockAeron);
+
+        final Subscription subscription =
+            addSubscription(CHANNEL, STREAM_ID_1, 1, availableImageHandler, unavailableImageHandler);
+        addImage(subscription, 2, SESSION_ID_1);
+        addImage(subscription, 3, SESSION_ID_2);
+
+        subscription.close();
+
+        final ArgumentCaptor<Image> imageArgumentCaptor = ArgumentCaptor.forClass(Image.class);
+        verify(availableImageHandler, times(2)).onAvailableImage(imageArgumentCaptor.capture());
+        verify(unavailableImageHandler).onUnavailableImage(imageArgumentCaptor.getAllValues().get(0));
+        verify(unavailableImageHandler).onUnavailableImage(imageArgumentCaptor.getAllValues().get(1));
+
+        verifyNoInteractions(unavailableImageExtendedHandler);
+    }
+
+    @Test
+    void onErrorCloseSubscription()
+    {
+        final Subscription subscription =
+            addSubscription(CHANNEL, STREAM_ID_1, 1, availableImageHandler, unavailableImageHandler);
+        addImage(subscription, 2, SESSION_ID_1);
+        addImage(subscription, 3, SESSION_ID_2);
+
+        final ErrorCode errorCode = ErrorCode.RESOURCE_TEMPORARILY_UNAVAILABLE;
+        final String errorMessage = "subscription is not available";
+        conductor.onError(subscription.registrationId(), errorCode.value(), errorCode, errorMessage);
+
+        assertTrue(subscription.isClosed());
+
+        final ArgumentCaptor<Image> imageArgumentCaptor = ArgumentCaptor.forClass(Image.class);
+        verify(availableImageHandler, times(2)).onAvailableImage(imageArgumentCaptor.capture());
+        verify(unavailableImageHandler).onUnavailableImage(imageArgumentCaptor.getAllValues().get(0));
+        verify(unavailableImageHandler).onUnavailableImage(imageArgumentCaptor.getAllValues().get(1));
+
+        final ArgumentCaptor<UnavailableImageReason> imageReasonArgumentCaptor =
+            ArgumentCaptor.forClass(UnavailableImageReason.class);
+        verify(unavailableImageExtendedHandler, times(2)).onUnavailableImage(
+            any(), imageReasonArgumentCaptor.capture());
+        final UnavailableImageReason reason = imageReasonArgumentCaptor.getValue();
+        assertEquals(
+            "error received from the driver: code=" + errorCode + " message=" + errorMessage,
+            reason.reason());
+        for (final UnavailableImageReason unavailableImageReason : imageReasonArgumentCaptor.getAllValues())
+        {
+            assertSame(reason, unavailableImageReason);
+        }
+    }
+
+    @Test
+    void onAsyncErrorCloseSubscription()
+    {
+        final long registrationId =
+            conductor.asyncAddSubscription(CHANNEL, STREAM_ID_1, availableImageHandler, unavailableImageHandler);
+        final Subscription subscription =
+            ((ClientConductor.PendingSubscription)conductor.resourceByRegIdMap().get(registrationId)).subscription;
+        conductor.addImage(subscription, 2, SESSION_ID_1, SUBSCRIPTION_POSITION_ID, SESSION_ID_1 + "-log",
+            SOURCE_INFO);
+
+        final ErrorCode errorCode = ErrorCode.UNKNOWN_SUBSCRIPTION;
+        final String errorMessage = "foo";
+        conductor.onAsyncError(subscription.registrationId(), errorCode.value(), errorCode, errorMessage);
+
+        assertTrue(subscription.isClosed());
+
+        final ArgumentCaptor<Image> imageArgumentCaptor = ArgumentCaptor.forClass(Image.class);
+        verify(availableImageHandler).onAvailableImage(imageArgumentCaptor.capture());
+        verify(unavailableImageHandler).onUnavailableImage(imageArgumentCaptor.getValue());
+
+        final ArgumentCaptor<UnavailableImageReason> imageReasonArgumentCaptor =
+            ArgumentCaptor.forClass(UnavailableImageReason.class);
+        verify(unavailableImageExtendedHandler).onUnavailableImage(any(), imageReasonArgumentCaptor.capture());
+        final UnavailableImageReason reason = imageReasonArgumentCaptor.getValue();
+        assertEquals(
+            "error received from the driver: code=" + errorCode + " message=" + errorMessage,
+            reason.reason());
+    }
+
+    private Subscription addSubscription(
+        final String channel,
+        final int streamId,
+        final long correlationId,
+        final AvailableImageHandler availableImageHandler,
+        final UnavailableImageHandler unavailableImageHandler)
+    {
+        when(driverProxy.addSubscription(channel, streamId)).thenReturn(correlationId);
+
+        whenReceiveBroadcastOnMessage(
+            ControlProtocolEvents.ON_SUBSCRIPTION_READY,
+            subscriptionReadyBuffer,
+            (buffer) ->
+            {
+                subscriptionReady.correlationId(correlationId);
+                return SubscriptionReadyFlyweight.LENGTH;
+            });
+
+        return conductor.addSubscription(channel, streamId, availableImageHandler, unavailableImageHandler);
+    }
+
+    private void addImage(final Subscription subscription, final long correlationId, final int sessionId)
+    {
+        conductor.onAvailableImage(
+            correlationId,
+            sessionId,
+            subscription.registrationId(),
+            SUBSCRIPTION_POSITION_ID,
+            sessionId + "-log",
+            SOURCE_INFO);
+    }
+
+    private void whenReceiveBroadcastOnMessage(
         final int msgTypeId, final MutableDirectBuffer buffer, final ToIntFunction<MutableDirectBuffer> filler)
     {
         doAnswer(

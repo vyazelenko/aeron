@@ -83,7 +83,7 @@ class SubscriptionTest
         doAnswer(
             (invocation) ->
             {
-                subscription.internalClose(NULL_VALUE, "Conductor.removeSubscription()");
+                subscription.internalClose(NULL_VALUE, new UnavailableImageReason("Conductor.removeSubscription()"));
                 return null;
             }).when(conductor).removeSubscription(subscription);
     }
