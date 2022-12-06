@@ -251,8 +251,7 @@ final class ClientConductor implements Agent
         final Object resource = resourceByRegIdMap.get(correlationId);
         if (resource instanceof Subscription)
         {
-            final Subscription subscription = (Subscription)resource;
-            closeSubscriptionWithError(subscription, errorCode, message);
+            closeSubscriptionWithError((Subscription)resource, errorCode, message);
         }
     }
 
@@ -265,8 +264,12 @@ final class ClientConductor implements Agent
         final Object resource = resourceByRegIdMap.get(correlationId);
         if (resource instanceof PendingSubscription)
         {
-            final PendingSubscription subscription = (PendingSubscription)resource;
-            closeSubscriptionWithError(subscription.subscription, errorCode, message);
+            final PendingSubscription pendingSubscription = (PendingSubscription)resource;
+            closeSubscriptionWithError(pendingSubscription.subscription, errorCode, message);
+        }
+        else if (resource instanceof Subscription)
+        {
+            closeSubscriptionWithError((Subscription)resource, errorCode, message);
         }
     }
 

@@ -875,6 +875,39 @@ class ClientConductorTest
     @Test
     void onAsyncErrorCloseSubscription()
     {
+        final Subscription subscription =
+            addSubscription(CHANNEL, STREAM_ID_1, 1, availableImageHandler, unavailableImageHandler);
+        addImage(subscription, 2, SESSION_ID_1);
+        addImage(subscription, 3, SESSION_ID_2);
+
+        final ErrorCode errorCode = ErrorCode.GENERIC_ERROR;
+        final String errorMessage = "something went wrong";
+        conductor.onAsyncError(subscription.registrationId(), errorCode.value(), errorCode, errorMessage);
+
+        assertTrue(subscription.isClosed());
+
+        final ArgumentCaptor<Image> imageArgumentCaptor = ArgumentCaptor.forClass(Image.class);
+        verify(availableImageHandler, times(2)).onAvailableImage(imageArgumentCaptor.capture());
+        verify(unavailableImageHandler).onUnavailableImage(imageArgumentCaptor.getAllValues().get(0));
+        verify(unavailableImageHandler).onUnavailableImage(imageArgumentCaptor.getAllValues().get(1));
+
+        final ArgumentCaptor<UnavailableImageReason> imageReasonArgumentCaptor =
+            ArgumentCaptor.forClass(UnavailableImageReason.class);
+        verify(unavailableImageExtendedHandler, times(2)).onUnavailableImage(
+            any(), imageReasonArgumentCaptor.capture());
+        final UnavailableImageReason reason = imageReasonArgumentCaptor.getValue();
+        assertEquals(
+            "error received from the driver: code=" + errorCode + " message=" + errorMessage,
+            reason.reason());
+        for (final UnavailableImageReason unavailableImageReason : imageReasonArgumentCaptor.getAllValues())
+        {
+            assertSame(reason, unavailableImageReason);
+        }
+    }
+
+    @Test
+    void onAsyncErrorClosePendingSubscriptionSubscription()
+    {
         final long registrationId =
             conductor.asyncAddSubscription(CHANNEL, STREAM_ID_1, availableImageHandler, unavailableImageHandler);
         final Subscription subscription =
