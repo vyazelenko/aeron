@@ -88,26 +88,20 @@ TEST (commandTests, testImageMessageFlyweight)
     AtomicBuffer ab(&testBuffer[0], testBuffer.size());
     const index_t BASE_OFFSET = 256;
 
-    std::string channelData = "channelData";
-
     ASSERT_NO_THROW(
         {
             ImageMessageFlyweight cmd(ab, BASE_OFFSET);
-            cmd.correlationId(1).subscriptionRegistrationId(2).streamId(3).channel(channelData);
+            cmd.correlationId(1).subscriptionRegistrationId(42);
 
             ASSERT_EQ(ab.getInt64(BASE_OFFSET + 0), 1);
-            ASSERT_EQ(ab.getInt64(BASE_OFFSET + 8), 2);
-            ASSERT_EQ(ab.getInt32(BASE_OFFSET + 16), 3);
-            ASSERT_EQ(ab.getString(BASE_OFFSET + 20), channelData);
+            ASSERT_EQ(ab.getInt64(BASE_OFFSET + 8), 42);
 
             ASSERT_EQ(cmd.correlationId(), 1);
-            ASSERT_EQ(cmd.streamId(), 3);
-            ASSERT_EQ(cmd.channel(), channelData);
+            ASSERT_EQ(cmd.subscriptionRegistrationId(), 42);
 
-            ASSERT_EQ(cmd.length(), static_cast<int>(20 + sizeof(std::int32_t) + channelData.length()));
+            ASSERT_EQ(IMAGE_MESSAGE_FLYWEIGHT_LENGTH, static_cast<int>(2 * sizeof(std::int64_t)));
         });
 }
-
 
 TEST (commandTests, testPublicationReadyFlyweight)
 {
