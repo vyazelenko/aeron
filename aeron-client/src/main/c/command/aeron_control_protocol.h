@@ -142,8 +142,6 @@ typedef struct aeron_image_message_stct
 {
     int64_t correlation_id;
     int64_t subscription_registration_id;
-    int32_t stream_id;
-    int32_t channel_length;
 }
 aeron_image_message_t;
 

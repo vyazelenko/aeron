@@ -889,10 +889,7 @@ void aeron_network_publication_check_untethered_subscriptions(
                         aeron_driver_conductor_on_unavailable_image(
                             conductor,
                             publication->conductor_fields.managed_resource.registration_id,
-                            tetherable_position->subscription_registration_id,
-                            publication->stream_id,
-                            AERON_IPC_CHANNEL,
-                            AERON_IPC_CHANNEL_LEN);
+                            tetherable_position->subscription_registration_id);
 
                         publication->untethered_subscription_state_change_func(
                             tetherable_position,

@@ -400,10 +400,7 @@ void aeron_driver_conductor_on_available_image(
 void aeron_driver_conductor_on_unavailable_image(
     aeron_driver_conductor_t *conductor,
     int64_t correlation_id,
-    int64_t subscription_registration_id,
-    int32_t stream_id,
-    const char *channel,
-    size_t channel_length);
+    int64_t subscription_registration_id);
 
 void aeron_driver_conductor_on_counter_ready(
     aeron_driver_conductor_t *conductor, int64_t registration_id, int32_t counter_id);
