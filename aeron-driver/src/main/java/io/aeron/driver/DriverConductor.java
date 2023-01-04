@@ -534,7 +534,7 @@ public final class DriverConductor implements Agent
 
     void notifyUnavailableImageLink(final long resourceId, final SubscriptionLink link)
     {
-        clientProxy.onUnavailableImage(resourceId, link.registrationId());
+        clientProxy.onUnavailableImage(resourceId, link.registrationId(), link.streamId(), link.channel());
     }
 
     void notifyAvailableImageLink(

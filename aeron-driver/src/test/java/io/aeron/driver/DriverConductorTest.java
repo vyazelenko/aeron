@@ -755,7 +755,8 @@ class DriverConductorTest
 
         doWorkUntil(() -> nanoClock.nanoTime() >= imageLivenessTimeoutNs() + 1000);
 
-        verify(mockClientProxy).onUnavailableImage(eq(publicationImage.correlationId()), eq(subId));
+        verify(mockClientProxy).onUnavailableImage(
+            eq(publicationImage.correlationId()), eq(subId), eq(STREAM_ID_1), anyString());
     }
 
     @Test
@@ -802,9 +803,9 @@ class DriverConductorTest
             anyString(),
             anyString());
         inOrder.verify(mockClientProxy, times(1)).onUnavailableImage(
-            eq(publicationImage.correlationId()), eq(subId1));
+            eq(publicationImage.correlationId()), eq(subId1), eq(STREAM_ID_1), anyString());
         inOrder.verify(mockClientProxy, times(1)).onUnavailableImage(
-            eq(publicationImage.correlationId()), eq(subId2));
+            eq(publicationImage.correlationId()), eq(subId2), eq(STREAM_ID_1), anyString());
     }
 
     @Test
@@ -856,7 +857,7 @@ class DriverConductorTest
             anyString(),
             anyString());
         inOrder.verify(mockClientProxy, times(1)).onUnavailableImage(
-            eq(publicationImage.correlationId()), eq(subOneId));
+            eq(publicationImage.correlationId()), eq(subOneId), eq(STREAM_ID_1), anyString());
         inOrder.verify(mockClientProxy, times(1)).onSubscriptionReady(eq(subTwoId), anyInt());
         inOrder.verifyNoMoreInteractions();
     }
@@ -1193,7 +1194,8 @@ class DriverConductorTest
 
         doWorkUntil(() -> (CLIENT_LIVENESS_TIMEOUT_NS * 2) - nanoClock.nanoTime() <= 0);
 
-        verify(mockClientProxy).onUnavailableImage(eq(networkPublicationCorrelationId(publication)), eq(subId));
+        verify(mockClientProxy).onUnavailableImage(
+            eq(networkPublicationCorrelationId(publication)), eq(subId), eq(STREAM_ID_1), anyString());
     }
 
     @Test

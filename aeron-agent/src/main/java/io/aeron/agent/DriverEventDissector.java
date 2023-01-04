@@ -593,10 +593,14 @@ final class DriverEventDissector
     private static void dissectImage(final StringBuilder builder)
     {
         builder
-            .append("correlationId=")
+            .append(IMAGE_MSG.streamId())
+            .append(" [")
             .append(IMAGE_MSG.correlationId())
-            .append(" subscriptionRegistrationId=")
-            .append(IMAGE_MSG.subscriptionRegistrationId());
+            .append(' ')
+            .append(IMAGE_MSG.subscriptionRegistrationId())
+            .append("] ");
+
+        IMAGE_MSG.appendChannel(builder);
     }
 
     private static void dissectRemoveEvent(final StringBuilder builder)

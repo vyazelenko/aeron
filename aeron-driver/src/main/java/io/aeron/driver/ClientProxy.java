@@ -125,13 +125,16 @@ final class ClientProxy
         transmit(ON_OPERATION_SUCCESS, buffer, 0, OperationSucceededFlyweight.LENGTH);
     }
 
-    void onUnavailableImage(final long correlationId, final long subscriptionRegistrationId)
+    void onUnavailableImage(
+        final long correlationId, final long subscriptionRegistrationId, final int streamId, final String channel)
     {
         imageMessage
             .correlationId(correlationId)
-            .subscriptionRegistrationId(subscriptionRegistrationId);
+            .subscriptionRegistrationId(subscriptionRegistrationId)
+            .streamId(streamId)
+            .channel(channel);
 
-        transmit(ON_UNAVAILABLE_IMAGE, buffer, 0, ImageMessageFlyweight.LENGTH);
+        transmit(ON_UNAVAILABLE_IMAGE, buffer, 0, imageMessage.length());
     }
 
     void onCounterReady(final long correlationId, final int counterId)

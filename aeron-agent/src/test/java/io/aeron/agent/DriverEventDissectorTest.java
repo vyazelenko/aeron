@@ -415,13 +415,15 @@ class DriverEventDissectorTest
         internalEncodeLogHeader(buffer, 0, eventCode.ordinal(), 99, () -> 21_032_000_000L);
         final ImageMessageFlyweight flyweight = new ImageMessageFlyweight();
         flyweight.wrap(buffer, LOG_HEADER_LENGTH);
+        flyweight.streamId(300);
         flyweight.correlationId(eventCode.id());
         flyweight.subscriptionRegistrationId(-19);
+        flyweight.channel("the channel");
 
         dissectCommand(eventCode, buffer, 0, builder);
 
         assertEquals("[21.032000] " + CONTEXT + ": " + eventCode.name() + " [" + eventCode.ordinal() + "/99]: " +
-            "correlationId=" + eventCode.id() + " subscriptionRegistrationId=-19",
+            "300 [" + eventCode.id() + " -19] the channel",
             builder.toString());
     }
 
