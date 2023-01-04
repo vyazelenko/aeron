@@ -325,7 +325,10 @@ void aeron_ipc_publication_check_untethered_subscriptions(
                         aeron_driver_conductor_on_unavailable_image(
                             conductor,
                             publication->conductor_fields.managed_resource.registration_id,
-                            tetherable_position->subscription_registration_id);
+                            tetherable_position->subscription_registration_id,
+                            publication->stream_id,
+                            AERON_IPC_CHANNEL,
+                            AERON_IPC_CHANNEL_LEN);
 
                         publication->untethered_subscription_state_change_func(
                             tetherable_position,
@@ -415,7 +418,10 @@ void aeron_ipc_publication_on_time_event(
                         aeron_driver_conductor_on_unavailable_image(
                             conductor,
                             publication->conductor_fields.managed_resource.registration_id,
-                            link->registration_id);
+                            link->registration_id,
+                            publication->stream_id,
+                            AERON_IPC_CHANNEL,
+                            AERON_IPC_CHANNEL_LEN);
                     }
                 }
             }

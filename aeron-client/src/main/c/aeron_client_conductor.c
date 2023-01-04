@@ -288,7 +288,8 @@ void aeron_client_conductor_on_driver_response(int32_t type_id, uint8_t *buffer,
         {
             aeron_image_message_t *response = (aeron_image_message_t *)buffer;
 
-            if (length < sizeof(aeron_image_message_t))
+            if (length < sizeof(aeron_image_message_t) ||
+                length < (sizeof(aeron_image_message_t) + response->channel_length))
             {
                 goto malformed_command;
             }

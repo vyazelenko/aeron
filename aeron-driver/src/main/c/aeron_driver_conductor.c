@@ -1186,7 +1186,10 @@ void aeron_driver_conductor_cleanup_spies(aeron_driver_conductor_t *conductor, a
             aeron_driver_conductor_on_unavailable_image(
                 conductor,
                 publication->conductor_fields.managed_resource.registration_id,
-                link->registration_id);
+                link->registration_id,
+                link->stream_id,
+                link->channel,
+                link->channel_length);
         }
 
         aeron_driver_conductor_unlink_subscribable(link, &publication->conductor_fields.subscribable);
@@ -1336,7 +1339,10 @@ void aeron_driver_conductor_image_transition_to_linger(
                 aeron_driver_conductor_on_unavailable_image(
                     conductor,
                     image->conductor_fields.managed_resource.registration_id,
-                    link->registration_id);
+                    link->registration_id,
+                    image->stream_id,
+                    link->channel,
+                    link->channel_length);
             }
         }
 
@@ -2397,20 +2403,71 @@ void aeron_driver_conductor_on_client_timeout(aeron_driver_conductor_t *conducto
         conductor, AERON_RESPONSE_ON_CLIENT_TIMEOUT, response, sizeof(aeron_client_timeout_t));
 }
 
-void aeron_driver_conductor_on_unavailable_image(
+void on_unavailable_image(
     aeron_driver_conductor_t *conductor,
-    int64_t correlation_id,
-    int64_t subscription_registration_id)
+    const int64_t correlation_id,
+    const int64_t subscription_registration_id,
+    const int32_t stream_id,
+    const char *channel,
+    const size_t channel_length,
+    const size_t response_length,
+    char *response_buffer)
 {
-    const size_t responseLength = sizeof(aeron_image_message_t);
-    char buffer[responseLength];
-
-    aeron_image_message_t *response = (aeron_image_message_t *)buffer;
+    aeron_image_message_t *response = (aeron_image_message_t *)response_buffer;
 
     response->correlation_id = correlation_id;
     response->subscription_registration_id = subscription_registration_id;
+    response->stream_id = stream_id;
+    response->channel_length = (int32_t)channel_length;
+    memcpy(response_buffer + sizeof(aeron_image_message_t), channel, channel_length);
 
-    aeron_driver_conductor_client_transmit(conductor, AERON_RESPONSE_ON_UNAVAILABLE_IMAGE, response, responseLength);
+    aeron_driver_conductor_client_transmit(conductor, AERON_RESPONSE_ON_UNAVAILABLE_IMAGE, response, response_length);
+}
+
+void aeron_driver_conductor_on_unavailable_image(
+    aeron_driver_conductor_t *conductor,
+    int64_t correlation_id,
+    int64_t subscription_registration_id,
+    int32_t stream_id,
+    const char *channel,
+    size_t channel_length)
+{
+    const size_t response_length = sizeof(aeron_image_message_t) + channel_length;
+
+    if (response_length > sizeof(aeron_image_message_t) + AERON_MAX_PATH)
+    {
+        char *buffer = NULL;
+        if (aeron_alloc((void **)&buffer, response_length) < 0)
+        {
+            AERON_APPEND_ERR("%s", "failed to allocate response buffer");
+            aeron_driver_conductor_log_error(conductor);
+            return;
+        }
+
+        on_unavailable_image(
+            conductor,
+            correlation_id,
+            subscription_registration_id,
+            stream_id,
+            channel,
+            channel_length,
+            response_length,
+            buffer);
+        aeron_free(buffer);
+    }
+    else
+    {
+        char buffer[sizeof(aeron_image_message_t) + AERON_MAX_PATH];
+        on_unavailable_image(
+            conductor,
+            correlation_id,
+            subscription_registration_id,
+            stream_id,
+            channel,
+            channel_length,
+            response_length,
+            buffer);
+    }
 }
 
 static bool aeron_driver_conductor_not_accepting_client_commands(aeron_driver_conductor_t *conductor)
@@ -4161,7 +4218,10 @@ void aeron_driver_conductor_subscription_link_notify_unavailable_images(
         aeron_driver_conductor_on_unavailable_image(
             conductor,
             entry->subscribable->correlation_id,
-            link->registration_id);
+            link->registration_id,
+            link->stream_id,
+            link->channel,
+            link->channel_length);
     }
 }
 

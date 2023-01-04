@@ -647,6 +647,14 @@ void aeron_image_buffers_ready_get_source_identity(
     *source_identity = reinterpret_cast<const char *>(source_identity_ptr + sizeof(int32_t));
 }
 
+void aeron_image_message_get_channel(
+    const aeron_image_message_t *msg, const char **channel, int32_t *channel_len)
+{
+    uint8_t *channel_ptr = ((uint8_t *)msg) + sizeof(aeron_image_message_t);
+    *channel_len = msg->channel_length;
+    *channel = reinterpret_cast<const char *>(channel_ptr);
+}
+
 MATCHER_P(
     IsSubscriptionReady,
     correlation_id,
@@ -901,13 +909,23 @@ MATCHER_P4(
     const aeron_image_message_t *response = reinterpret_cast<aeron_image_message_t *>(std::get<1>(arg));
     bool result = true;
     result &= response->correlation_id == correlation_id;
+    result &= response->stream_id == stream_id;
     result &= response->subscription_registration_id == subscription_registration_id;
+
+    int32_t response_channel_len;
+    const char *response_channel;
+    aeron_image_message_get_channel(response, &response_channel, &response_channel_len);
+    const std::string str_channel = std::string(response_channel, (size_t)response_channel_len);
+
+    result &= str_channel == std::string(channel);
 
     if (!result)
     {
         *result_listener <<
             "response.correlation_id = " << response->correlation_id <<
-            ", response.subscription_registration_id = " << response->subscription_registration_id;
+            ", response.subscription_registration_id = " << response->subscription_registration_id <<
+            ", response.stream_id = " << response->stream_id <<
+            ", response.channel = " << str_channel;
     }
 
     return result;

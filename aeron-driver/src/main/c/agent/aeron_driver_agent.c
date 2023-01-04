@@ -1372,7 +1372,7 @@ static const char *dissect_cmd_out(int64_t cmd_id, const void *message, size_t l
             aeron_error_response_t *command = (aeron_error_response_t *)message;
 
             const char *error_message = (const char *)message + sizeof(aeron_error_response_t);
-            snprintf(buffer, sizeof(buffer) - 1, "%" PRId64 " %d %.*s",
+            snprintf(buffer, sizeof(buffer) - 1, "%" PRId64 "%d %.*s",
                 command->offending_command_correlation_id,
                 command->error_code,
                 command->error_message_length,
@@ -1384,9 +1384,12 @@ static const char *dissect_cmd_out(int64_t cmd_id, const void *message, size_t l
         {
             aeron_image_message_t *command = (aeron_image_message_t *)message;
 
-            snprintf(buffer, sizeof(buffer) - 1, "%" PRId64 " %" PRId64 "",
-                command->correlation_id,
-                command->subscription_registration_id);
+            const char *channel = (const char *)message + sizeof(aeron_image_message_t);
+            snprintf(buffer, sizeof(buffer) - 1, "%d %.*s [%" PRId64 "]",
+                command->stream_id,
+                command->channel_length,
+                channel,
+                command->correlation_id);
             break;
         }
 
