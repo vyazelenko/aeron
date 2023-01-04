@@ -36,6 +36,13 @@ namespace aeron { namespace command
 *  |                 Subscription Registration ID                  |
 *  |                                                               |
 *  +---------------------------------------------------------------+
+*  |                          Stream ID                            |
+*  +---------------------------------------------------------------+
+*  |                        Channel Length                         |
+*  +---------------------------------------------------------------+
+*  |                           Channel                            ...
+* ...                                                              |
+*  +---------------------------------------------------------------+
 */
 
 #pragma pack(push)
@@ -44,10 +51,12 @@ struct ImageMessageDefn
 {
     std::int64_t correlationId;
     std::int64_t subscriptionRegistrationId;
+    std::int32_t streamId;
+    std::int32_t channelLength;
+    std::int8_t channelData[1];
 };
 #pragma pack(pop)
 
-static const util::index_t IMAGE_MESSAGE_FLYWEIGHT_LENGTH = sizeof(struct ImageMessageDefn);
 
 class ImageMessageFlyweight : public Flyweight<ImageMessageDefn>
 {
@@ -79,6 +88,33 @@ public:
     {
         m_struct.subscriptionRegistrationId = value;
         return *this;
+    }
+
+    inline std::int32_t streamId() const
+    {
+        return m_struct.streamId;
+    }
+
+    inline this_t &streamId(std::int32_t value)
+    {
+        m_struct.streamId = value;
+        return *this;
+    }
+
+    inline std::string channel() const
+    {
+        return stringGet(static_cast<util::index_t>(offsetof(ImageMessageDefn, channelLength)));
+    }
+
+    inline this_t &channel(const std::string &value)
+    {
+        stringPut(static_cast<util::index_t>(offsetof(ImageMessageDefn, channelLength)), value);
+        return *this;
+    }
+
+    inline util::index_t length() const
+    {
+        return static_cast<util::index_t>(offsetof(ImageMessageDefn, channelData) + m_struct.channelLength);
     }
 };
 
