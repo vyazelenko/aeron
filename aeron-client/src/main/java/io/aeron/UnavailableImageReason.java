@@ -41,4 +41,14 @@ public final class UnavailableImageReason
     {
         return reason;
     }
+
+    /**
+     * {@inheritDoc}
+     */
+    public String toString()
+    {
+        return "UnavailableImageReason{" +
+            "reason='" + reason + '\'' +
+            '}';
+    }
 }
