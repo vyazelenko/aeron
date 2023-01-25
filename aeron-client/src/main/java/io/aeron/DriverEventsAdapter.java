@@ -189,7 +189,7 @@ class DriverEventsAdapter implements MessageHandler
                 conductor.onUnavailableImage(
                     imageMessage.correlationId(),
                     imageMessage.subscriptionRegistrationId(),
-                    null);
+                    new UnavailableImageReason(imageMessage.reason()));
                 break;
             }
 

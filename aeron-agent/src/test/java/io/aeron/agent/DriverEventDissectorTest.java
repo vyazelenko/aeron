@@ -418,12 +418,12 @@ class DriverEventDissectorTest
         flyweight.streamId(300);
         flyweight.correlationId(eventCode.id());
         flyweight.subscriptionRegistrationId(-19);
-        flyweight.channel("the channel");
+        flyweight.reason("the reason");
 
         dissectCommand(eventCode, buffer, 0, builder);
 
         assertEquals("[21.032000] " + CONTEXT + ": " + eventCode.name() + " [" + eventCode.ordinal() + "/99]: " +
-            "300 [" + eventCode.id() + " -19] the channel",
+            "300 [" + eventCode.id() + " -19] the reason",
             builder.toString());
     }
 

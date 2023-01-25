@@ -34,9 +34,9 @@ import static org.agrona.BitUtil.SIZE_OF_LONG;
  *  +---------------------------------------------------------------+
  *  |                          Stream ID                            |
  *  +---------------------------------------------------------------+
- *  |                       Channel Length                          |
+ *  |                        Reason Length                          |
  *  +---------------------------------------------------------------+
- *  |                       Channel (ASCII)                        ...
+ *  |                       Reason (ASCII)                        ...
  * ...                                                              |
  *  +---------------------------------------------------------------+
  * </pre>
@@ -46,11 +46,11 @@ public class ImageMessageFlyweight
     private static final int CORRELATION_ID_OFFSET = 0;
     private static final int SUBSCRIPTION_REGISTRATION_ID_OFFSET = CORRELATION_ID_OFFSET + SIZE_OF_LONG;
     private static final int STREAM_ID_FIELD_OFFSET = SUBSCRIPTION_REGISTRATION_ID_OFFSET + SIZE_OF_LONG;
-    private static final int CHANNEL_OFFSET = STREAM_ID_FIELD_OFFSET + SIZE_OF_INT;
+    private static final int REASON_OFFSET = STREAM_ID_FIELD_OFFSET + SIZE_OF_INT;
 
     private MutableDirectBuffer buffer;
     private int offset;
-    private int lengthOfChannel;
+    private int lengthOfReason;
 
     /**
      * Wrap the buffer at a given offset for updates.
@@ -137,40 +137,40 @@ public class ImageMessageFlyweight
     }
 
     /**
-     * Get the channel field as ASCII.
+     * Get the reason field as ASCII.
      *
-     * @return channel field.
+     * @return reason field.
      */
-    public String channel()
+    public String reason()
     {
-        final int length = buffer.getInt(offset + CHANNEL_OFFSET);
-        lengthOfChannel = SIZE_OF_INT + length;
+        final int length = buffer.getInt(offset + REASON_OFFSET);
+        lengthOfReason = SIZE_OF_INT + length;
 
-        return buffer.getStringAscii(offset + CHANNEL_OFFSET, length);
+        return buffer.getStringAscii(offset + REASON_OFFSET, length);
     }
 
     /**
-     * Append the channel value to an {@link Appendable}.
+     * Append the reason value to an {@link Appendable}.
      *
-     * @param appendable to append channel to.
+     * @param appendable to append reason to.
      */
-    public void appendChannel(final Appendable appendable)
+    public void appendReason(final Appendable appendable)
     {
-        final int length = buffer.getInt(offset + CHANNEL_OFFSET);
-        lengthOfChannel = SIZE_OF_INT + length;
+        final int length = buffer.getInt(offset + REASON_OFFSET);
+        lengthOfReason = SIZE_OF_INT + length;
 
-        buffer.getStringAscii(offset + CHANNEL_OFFSET, appendable);
+        buffer.getStringAscii(offset + REASON_OFFSET, appendable);
     }
 
     /**
-     * Set the channel field as ASCII
+     * Set the reason field as ASCII
      *
-     * @param channel field value
+     * @param reason field value
      * @return this for a fluent API.
      */
-    public ImageMessageFlyweight channel(final String channel)
+    public ImageMessageFlyweight reason(final String reason)
     {
-        lengthOfChannel = buffer.putStringAscii(offset + CHANNEL_OFFSET, channel);
+        lengthOfReason = buffer.putStringAscii(offset + REASON_OFFSET, reason);
 
         return this;
     }
@@ -184,6 +184,6 @@ public class ImageMessageFlyweight
      */
     public int length()
     {
-        return CHANNEL_OFFSET + lengthOfChannel;
+        return REASON_OFFSET + lengthOfReason;
     }
 }

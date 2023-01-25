@@ -600,7 +600,7 @@ final class DriverEventDissector
             .append(IMAGE_MSG.subscriptionRegistrationId())
             .append("] ");
 
-        IMAGE_MSG.appendChannel(builder);
+        IMAGE_MSG.appendReason(builder);
     }
 
     private static void dissectRemoveEvent(final StringBuilder builder)

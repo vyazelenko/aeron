@@ -992,7 +992,8 @@ public final class PublicationImage
                     }
                     else if ((untethered.timeOfLastUpdateNs + untetheredWindowLimitTimeoutNs) - nowNs <= 0)
                     {
-                        conductor.notifyUnavailableImageLink(correlationId, untethered.subscriptionLink);
+                        conductor.notifyUnavailableImageLink(
+                            correlationId, untethered.subscriptionLink, "untethered subscription window timeout");
                         untethered.state(UntetheredSubscription.State.LINGER, nowNs, streamId, sessionId);
                     }
                 }

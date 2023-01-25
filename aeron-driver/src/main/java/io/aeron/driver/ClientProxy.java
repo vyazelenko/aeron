@@ -126,13 +126,13 @@ final class ClientProxy
     }
 
     void onUnavailableImage(
-        final long correlationId, final long subscriptionRegistrationId, final int streamId, final String channel)
+        final long correlationId, final long subscriptionRegistrationId, final int streamId, final String reason)
     {
         imageMessage
             .correlationId(correlationId)
             .subscriptionRegistrationId(subscriptionRegistrationId)
             .streamId(streamId)
-            .channel(channel);
+            .reason(reason);
 
         transmit(ON_UNAVAILABLE_IMAGE, buffer, 0, imageMessage.length());
     }

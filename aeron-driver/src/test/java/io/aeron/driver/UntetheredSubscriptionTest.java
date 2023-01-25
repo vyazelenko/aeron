@@ -88,11 +88,12 @@ class UntetheredSubscriptionTest
 
         final long timeNs = TIME_NS + 1;
         ipcPublication.onTimeEvent(timeNs, 0, conductor);
-        verify(conductor, never()).notifyUnavailableImageLink(REGISTRATION_ID, untetheredLink);
+        verify(conductor, never()).notifyUnavailableImageLink(eq(REGISTRATION_ID), eq(untetheredLink), anyString());
 
         final long windowLimitTimeoutNs = timeNs + UNTETHERED_WINDOW_LIMIT_TIMEOUT_NS;
         ipcPublication.onTimeEvent(windowLimitTimeoutNs, 0, conductor);
-        verify(conductor, times(1)).notifyUnavailableImageLink(REGISTRATION_ID, untetheredLink);
+        verify(conductor, times(1)).notifyUnavailableImageLink(
+            REGISTRATION_ID, untetheredLink, "untethered subscription window timeout");
 
         ipcPublication.updatePublisherLimit();
         assertEquals(TERM_WINDOW_LENGTH, publisherLimit.get());

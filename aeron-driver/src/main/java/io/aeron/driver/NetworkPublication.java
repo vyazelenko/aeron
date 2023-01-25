@@ -883,7 +883,8 @@ public final class NetworkPublication
                     }
                     else if ((untethered.timeOfLastUpdateNs + untetheredWindowLimitTimeoutNs) - nowNs <= 0)
                     {
-                        conductor.notifyUnavailableImageLink(registrationId, untethered.subscriptionLink);
+                        conductor.notifyUnavailableImageLink(
+                            registrationId, untethered.subscriptionLink, "untethered subscription window timeout");
                         untethered.state(UntetheredSubscription.State.LINGER, nowNs, streamId, sessionId);
                     }
                 }

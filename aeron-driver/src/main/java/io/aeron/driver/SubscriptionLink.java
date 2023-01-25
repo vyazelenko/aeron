@@ -184,12 +184,12 @@ public abstract class SubscriptionLink implements DriverManagedResource
         return false;
     }
 
-    void notifyUnavailableImages(final DriverConductor conductor)
+    void notifyUnavailableImages(final DriverConductor conductor, final String reason)
     {
         for (final Map.Entry<Subscribable, ReadablePosition> entry : positionBySubscribableMap.entrySet())
         {
             final Subscribable subscribable = entry.getKey();
-            conductor.notifyUnavailableImageLink(subscribable.subscribableRegistrationId(), this);
+            conductor.notifyUnavailableImageLink(subscribable.subscribableRegistrationId(), this, reason);
         }
     }
 

@@ -526,15 +526,15 @@ public final class DriverConductor implements Agent
             final SubscriptionLink link = subscriptionLinks.get(i);
             if (link.isLinked(publication))
             {
-                notifyUnavailableImageLink(publication.registrationId(), link);
+                notifyUnavailableImageLink(publication.registrationId(), link, "spies finished consuming");
                 link.unlink(publication);
             }
         }
     }
 
-    void notifyUnavailableImageLink(final long resourceId, final SubscriptionLink link)
+    void notifyUnavailableImageLink(final long resourceId, final SubscriptionLink link, final String reason)
     {
-        clientProxy.onUnavailableImage(resourceId, link.registrationId(), link.streamId(), link.channel());
+        clientProxy.onUnavailableImage(resourceId, link.registrationId(), link.streamId(), reason);
     }
 
     void notifyAvailableImageLink(
@@ -604,7 +604,7 @@ public final class DriverConductor implements Agent
             if (link.isLinked(image))
             {
                 rejoin = link.isRejoin();
-                notifyUnavailableImageLink(image.correlationId(), link);
+                notifyUnavailableImageLink(image.correlationId(), link, "transition to linger");
             }
         }
 
@@ -623,7 +623,7 @@ public final class DriverConductor implements Agent
             final SubscriptionLink link = subscriptionLinks.get(i);
             if (link.isLinked(publication))
             {
-                notifyUnavailableImageLink(publication.registrationId(), link);
+                notifyUnavailableImageLink(publication.registrationId(), link, "transition to linger");
             }
         }
     }
@@ -1124,7 +1124,7 @@ public final class DriverConductor implements Agent
         subscription.close();
         cleanupSubscriptionLink(subscription);
         clientProxy.operationSucceeded(correlationId);
-        subscription.notifyUnavailableImages(this);
+        subscription.notifyUnavailableImages(this, "remove receive destination");
     }
 
     void onRemoveRcvNetworkDestination(
